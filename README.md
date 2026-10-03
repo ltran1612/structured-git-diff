@@ -1,6 +1,6 @@
 # structdiff.nvim
 
-A grouped view of your working-tree diff for Neovim, with an AI-written narrative of *why* each file changed.
+A grouped view of your working-tree diff for Neovim, with an AI-written narrative of *why* each file changed. Written in Rust with [nvim-oxi](https://github.com/noib3/nvim-oxi).
 
 ```
  StructDiff  5 files                    │ HEAD                     │ working tree
@@ -29,7 +29,9 @@ A grouped view of your working-tree diff for Neovim, with an AI-written narrativ
 
 ## Requirements
 
-Neovim ≥ 0.10, git. For narratives you also need [Claude Code](https://claude.com/claude-code).
+- **Neovim 0.12.x.** The plugin binds Neovim's C API directly and refuses to load on other versions (see [Compatibility](#compatibility)).
+- A Rust toolchain (`cargo`) to build it, and git.
+- For narratives, [Claude Code](https://claude.com/claude-code).
 
 ## Install
 
@@ -38,11 +40,15 @@ lazy.nvim:
 ```lua
 {
   "…/structdiff.nvim", -- or dir = "~/path/to/organizeddiffview"
+  main = "structdiff",
+  build = "./build.sh",
   cmd = { "StructDiff", "StructDiffClose", "StructDiffRefresh", "StructDiffNarrative", "StructDiffGenerate" },
   keys = { { "<leader>gv", "<cmd>StructDiff<cr>", desc = "StructDiff" } },
   opts = {},
 }
 ```
+
+`build.sh` runs `cargo build --release` and installs the library as `lua/structdiff.so`, where `require("structdiff")` finds it. `main` is needed because lazy.nvim only auto-detects Lua modules. After pulling changes, rebuild with `:Lazy build structdiff.nvim` and restart Neovim.
 
 Install the skill so Claude Code can find it:
 
@@ -73,7 +79,9 @@ ln -s /path/to/organizeddiffview/skill/diff-narrative ~/.claude/skills/diff-narr
 
 The real file on the right only gets the `]g [g ]f [f` keys, and only while it's shown in the view. `q`, `R` and `gn` keep their normal meaning when you edit there.
 
-You can also run `/diff-narrative [range]` in any Claude Code session in the repo. The open view watches `.structdiff/` and reloads as soon as the file is written.
+You can also run `/diff-narrative [range]` in any Claude Code session in the repo. The open view checks the narrative file every 300ms and reloads as soon as it changes.
+
+If you quit Neovim while `:StructDiffGenerate` is running, the `claude` run keeps going and still writes the narrative. The next `:StructDiff` on that range picks it up.
 
 ## Ranges
 
@@ -90,7 +98,7 @@ When the right side is a revision, both sides are read-only buffers. Uncommitted
 
 ## Grouping
 
-Groups are an ordered list. Each pattern is a Vim regex in very-magic mode (`\v` is prepended), matched against the repo-relative path. The **first** matching group wins, and anything unmatched goes to `other_group`. Empty groups are hidden.
+Groups are an ordered list. Each pattern is a [Rust `regex`](https://docs.rs/regex/latest/regex/#syntax) (the usual PCRE-like syntax, without lookaround), matched anywhere in the repo-relative path, so anchor with `^` and `$`. The **first** matching group wins, and anything unmatched goes to `other_group`. Empty groups are hidden. Invalid patterns are reported and skipped.
 
 ```lua
 opts = {
@@ -103,9 +111,7 @@ opts = {
 }
 ```
 
-Defaults: Tests, CI, Config/Build, Docs, Source, Other (see `lua/structdiff/config.lua`).
-
-In very-magic mode, `< > = @ % { }` are special. Escape them with `\` when you mean them literally.
+Defaults: Tests, CI, Config/Build, Docs, Source, Other (see `default_groups` in `crates/core/src/group.rs`).
 
 **Per-repo groups:** put a committable `.structdiff.json` at the repo root:
 
@@ -155,10 +161,35 @@ opts = {
 }
 ```
 
+Options you don't set keep their defaults. Lists such as `groups` and `generate_cmd` replace the default list rather than merging with it.
+
 Highlight groups (all `default` links, so you can override them): `StructDiffTitle`, `StructDiffGroup`, `StructDiffCount`, `StructDiffDir`, `StructDiffReason`, `StructDiffWhy`, `StructDiffCurrent`, `StructDiffAdded`, `StructDiffChanged`, `StructDiffRemoved`, `StructDiffFresh`, `StructDiffStale`, `StructDiffNone`.
+
+## Layout
+
+| Crate | What it is |
+|---|---|
+| `crates/core` (`structdiff-core`) | Everything that doesn't need Neovim: git and ranges, grouping, the narrative file contract, and the `Model` the view displays. Plain Rust, no Neovim dependency. |
+| `crates/nvim` (`structdiff`) | The plugin: a `cdylib` loaded by Neovim. Layout, diff panes, sidebar, keymaps, commands, the narrative watcher and background generation. |
+| `crates/nvim-tests` | Tests that run inside a real Neovim through nvim-oxi's test harness. |
+
+`plugin/structdiff.lua` is a single `require("structdiff")`. Neovim can only load native modules through `require`, so that line is the whole Lua side.
 
 ## Tests
 
 ```sh
-nvim --headless -l tests/run.lua
+cargo test -p structdiff-core          # logic: git, ranges, grouping, narrative
+cargo test -p structdiff-nvim-tests    # the view, inside Neovim (needs nvim 0.12 on PATH)
 ```
+
+## Compatibility
+
+nvim-oxi is pinned to an upstream commit with the `neovim-0-12` feature, which predates some 0.12.x changes. Checked against the v0.12.5 sources, three bindings don't match and the plugin avoids them:
+
+| nvim-oxi binding | Problem on 0.12.5 | Replacement |
+|---|---|---|
+| `api::create_autocmd` | `Dict(create_autocmd)` gained a `buf` key, so the options struct is misaligned | no autocmds; the 300ms watcher timer also notices when the tab is closed |
+| `api::set_hl` | `Dict(highlight)` was reordered and extended | `:highlight default link`, re-applied on every redraw (survives colorscheme changes) |
+| `api::list_tabpages` | `nvim_list_tabpages` now takes an `Arena*`; calling it corrupts the heap | `tabpagenr('$')` |
+
+The details are in the doc comment at the top of `crates/nvim/src/lib.rs`. Before moving to a new nvim-oxi or Neovim version, re-check every binding the plugin uses, then widen the version check in `init()`.

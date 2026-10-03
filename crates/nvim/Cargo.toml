@@ -1,0 +1,13 @@
+[package]
+name = "structdiff"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nvim-oxi = { workspace = true, features = ["neovim-0-12", "libuv"] }
+structdiff-core = { workspace = true }
+serde = { version = "1", features = ["derive"] }

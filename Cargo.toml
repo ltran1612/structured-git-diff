@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/nvim", "crates/nvim-tests"]
+default-members = ["crates/core", "crates/nvim"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+nvim-oxi = { git = "https://github.com/noib3/nvim-oxi", rev = "7ad27a7d3c8a72c34e7b9914eb77fb0644ff3f65" }
+structdiff-core = { path = "crates/core" }
+structdiff = { path = "crates/nvim" }
+
+[profile.release]
+lto = "thin"
