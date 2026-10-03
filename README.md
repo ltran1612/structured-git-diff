@@ -19,7 +19,7 @@ A grouped view of your working-tree diff for Neovim, with an AI-written narrativ
 # Change narrative   (overall story, then one section per group)
 ```
 
-- **Grouping:** changed files (staged, unstaged and untracked, all against HEAD) are grouped by regex path patterns.
+- **Grouping:** changed files are grouped by regex path patterns. By default you see your uncommitted work (staged, unstaged and untracked, all against HEAD). You can also review a branch: `:StructDiff main...HEAD`.
 - **Navigation:** move between groups and files. Each file opens as a native side-by-side `:diffthis` against HEAD. The right-hand side is the real file, so you can edit it.
 - **Narrative:** the `diff-narrative` Claude Code skill writes `.structdiff/narrative.json`, and the view shows it:
   - an overall story,
@@ -54,8 +54,8 @@ ln -s /path/to/organizeddiffview/skill/diff-narrative ~/.claude/skills/diff-narr
 
 | Command | |
 |---|---|
-| `:StructDiff` | Open the view (or refresh it if it's already open) |
-| `:StructDiffGenerate` | Run the skill through `claude -p` and reload when it finishes |
+| `:StructDiff [range]` | Open the view (or refresh it if it's already open with the same range) |
+| `:StructDiffGenerate [range]` | Run the skill through `claude -p` for that range, and reload when it finishes |
 | `:StructDiffNarrative` | Toggle the narrative split |
 | `:StructDiffRefresh` | Re-scan git and reload the narrative |
 | `:StructDiffClose` | Close the view |
@@ -73,7 +73,20 @@ ln -s /path/to/organizeddiffview/skill/diff-narrative ~/.claude/skills/diff-narr
 
 The real file on the right only gets the `]g [g ]f [f` keys, and only while it's shown in the view. `q`, `R` and `gn` keep their normal meaning when you edit there.
 
-You can also run `/diff-narrative` in any Claude Code session in the repo. The open view watches `.structdiff/` and reloads as soon as the file is written.
+You can also run `/diff-narrative [range]` in any Claude Code session in the repo. The open view watches `.structdiff/` and reloads as soon as the file is written.
+
+## Ranges
+
+| Range | Left | Right |
+|---|---|---|
+| *(none)* | HEAD | working tree, including untracked files |
+| `main` | `main` | working tree, including untracked files |
+| `main..feature` | `main` | `feature` |
+| `main...HEAD` | merge-base of `main` and HEAD | HEAD: what the branch adds, like a PR |
+
+An empty side of `..` or `...` means HEAD, so `:StructDiff main...` is the usual "review my branch". Ref names tab-complete, including the part after the dots.
+
+When the right side is a revision, both sides are read-only buffers. Uncommitted edits don't appear and don't make the narrative stale. Ranges are re-resolved on every refresh, so new commits on either branch are picked up with `R`.
 
 ## Grouping
 
@@ -106,8 +119,8 @@ Groups are displayed in config order. Once a narrative exists, the group holding
 
 Everything lives in `<repo>/.structdiff/`, which the plugin adds to `.git/info/exclude`, so it never shows up in `git status`.
 
-- `groups.json` (written by the viewer on every open and refresh): the groups, their files, and a `fingerprint` of the change set.
-- `narrative.json` (written by the skill):
+- `groups.json` (written by the viewer on every open and refresh): the range (`spec`, resolved `base`/`target` SHAs), the `output` file name, the groups and their files, and a `fingerprint` of the change set.
+- `narrative.json` for the working tree, or `narrative-<range>.json` for a range (characters outside `A-Za-z0-9._-` become `_`, so `origin/main...HEAD` → `narrative-origin_main...HEAD.json`). The skill writes it in this shape:
 
 ```json
 {
@@ -120,7 +133,9 @@ Everything lives in `<repo>/.structdiff/`, which the plugin adds to `.git/info/e
 }
 ```
 
-The fingerprint is a sha256 of `git diff HEAD` plus the contents of untracked files. If the diff changes after the narrative was written, the sidebar shows **narrative stale**. The old narrative stays visible until you regenerate it.
+Each range has its own file, so reviewing a branch and then going back to your uncommitted work never overwrites either narrative. The file is keyed by what you typed, so `main...HEAD` and `main...feature` get separate narratives even when they point at the same commits.
+
+The fingerprint is a sha256 of the range's diff, plus the contents of untracked files when comparing against the working tree. If the diff changes after the narrative was written, the sidebar shows **narrative stale**. The old narrative stays visible until you regenerate it.
 
 Any tool can produce this file. The skill is just the default producer.
 
@@ -131,7 +146,8 @@ opts = {
   sidebar_width = 40,
   narrative_height = 15,
   show_reasons = true,
-  generate_cmd = { "claude", "-p", "/diff-narrative", "--permission-mode", "acceptEdits",
+  -- "{range}" is replaced by the range ("" for the working tree)
+  generate_cmd = { "claude", "-p", "/diff-narrative {range}", "--permission-mode", "acceptEdits",
                    "--allowedTools", "Bash(git:*)", "Read", "Write" },
   keymaps = { next_group = "]g", prev_group = "[g", next_file = "]f", prev_file = "[f",
               select = "<CR>", toggle_fold = { "za", "<Tab>" }, toggle_narrative = "gn",

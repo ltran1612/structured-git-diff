@@ -45,12 +45,13 @@ M.defaults = {
   sidebar_width = 40,
   narrative_height = 15,
   show_reasons = true,
-  -- Run by :StructDiffGenerate from the repo root. The skill writes
-  -- .structdiff/narrative.json, which the viewer then reloads.
+  -- Run by :StructDiffGenerate from the repo root. "{range}" becomes the
+  -- range spec ("" for the working tree). The skill writes the narrative file
+  -- named in .structdiff/groups.json, which the viewer then reloads.
   generate_cmd = {
     "claude",
     "-p",
-    "/diff-narrative",
+    "/diff-narrative {range}",
     "--permission-mode",
     "acceptEdits",
     "--allowedTools",

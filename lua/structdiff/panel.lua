@@ -9,6 +9,7 @@ local hl_links = {
   StructDiffTitle = "Title",
   StructDiffGroup = "Directory",
   StructDiffCount = "Comment",
+  StructDiffRange = "Constant",
   StructDiffDir = "Comment",
   StructDiffReason = "Comment",
   StructDiffWhy = "Special",
@@ -116,6 +117,10 @@ function M.render(s)
 
   local row = add((" StructDiff  %d file%s"):format(#s.flat, #s.flat == 1 and "" or "s"), { kind = "header" })
   table.insert(marks, { row, 0, { end_col = #lines[row + 1], hl_group = "StructDiffTitle" } })
+  local r = s.range
+  local what = r.target and r.spec or (r.left_label .. " → working tree")
+  row = add(" " .. what, { kind = "header" })
+  table.insert(marks, { row, 0, { end_col = #lines[row + 1], hl_group = "StructDiffRange" } })
   local label = narrative_label[s.generating and "generating" or s.narrative_state]
   row = add(" " .. label[1], { kind = "header" })
   table.insert(marks, { row, 0, { end_col = #lines[row + 1], hl_group = label[2] } })

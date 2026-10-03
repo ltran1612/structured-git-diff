@@ -8,8 +8,9 @@ local diff = require("structdiff.diff")
 local M = {}
 local api = vim.api
 
---- The active view, or nil. Fields: repo, files, fingerprint, grouped, flat,
---- narrative, narrative_state, current (path), collapsed, tab, *_win, panel_buf.
+--- The active view, or nil. Fields: repo, spec, range, files, fingerprint,
+--- grouped, flat, narrative, narrative_state, current (path), collapsed, tab,
+--- *_win, panel_buf.
 M.state = nil
 
 local augroup = api.nvim_create_augroup("structdiff", { clear = true })
@@ -37,7 +38,7 @@ local function rebuild(s)
 end
 
 local function load_narrative(s)
-  local nar, err = narrative.load(s.repo.root)
+  local nar, err = narrative.load(s.repo.root, s.spec)
   if err then
     notify(err, vim.log.levels.WARN)
   end
@@ -45,13 +46,21 @@ local function load_narrative(s)
   s.narrative_state = narrative.state(nar, s.fingerprint)
 end
 
+-- Re-resolve the range (branches move), rescan, and export groups.json.
 local function load(s)
+  local range, err = git.resolve_range(s.repo, s.spec)
+  if not range then
+    notify(err, vim.log.levels.ERROR)
+    return false
+  end
+  s.range = range
   narrative.ensure_excluded(s.repo.exclude)
-  s.files = git.changed_files(s.repo)
-  s.fingerprint = git.fingerprint(s.repo, s.files)
+  s.files = git.changed_files(s.repo, range)
+  s.fingerprint = git.fingerprint(s.repo, range, s.files)
   load_narrative(s)
   rebuild(s)
-  narrative.export_groups(s.repo.root, s.grouped, s.fingerprint)
+  narrative.export_groups(s.repo.root, range, s.grouped, s.fingerprint)
+  return true
 end
 
 local function index_of(s, path)
@@ -141,7 +150,7 @@ local function render_narrative(s)
   if not (s.narrative_buf and api.nvim_buf_is_valid(s.narrative_buf)) then
     return
   end
-  local lines = narrative.render(s.narrative, s.grouped, s.narrative_state)
+  local lines = narrative.render(s.narrative, s.grouped, s.narrative_state, s.spec)
   vim.bo[s.narrative_buf].modifiable = true
   api.nvim_buf_set_lines(s.narrative_buf, 0, -1, false, lines)
   vim.bo[s.narrative_buf].modifiable = false
@@ -197,8 +206,9 @@ local function watch(s)
   if not handle or not timer then
     return
   end
+  local want = narrative.filename(s.spec)
   handle:start(dir, {}, function(err, fname)
-    if err or fname ~= "narrative.json" then
+    if err or fname ~= want then
       return
     end
     timer:stop()
@@ -312,20 +322,31 @@ function M.reload_narrative()
   redraw(s)
 end
 
-function M.open()
+--- Open the view. `spec` selects what to compare (see git.resolve_range):
+--- nil/"" = HEAD vs working tree, "main" = main vs working tree,
+--- "main..HEAD", "main...HEAD" = commits only. Reopening with the same spec
+--- refreshes; a different spec replaces the view.
+function M.open(spec)
+  spec = vim.trim(spec or "")
   local s = M.state
   if s and s.tab and api.nvim_tabpage_is_valid(s.tab) then
-    api.nvim_set_current_tabpage(s.tab)
-    return M.refresh()
+    if s.spec == spec then
+      api.nvim_set_current_tabpage(s.tab)
+      return M.refresh()
+    end
+    M.close()
   end
   local repo, err = git.repo(vim.fn.getcwd())
   if not repo then
     return notify("not a git repository: " .. (err or ""), vim.log.levels.ERROR)
   end
-  s = { repo = repo, collapsed = {} }
-  load(s)
+  s = { repo = repo, spec = spec, collapsed = {} }
+  if not load(s) then
+    return
+  end
   if #s.flat == 0 then
-    return notify("no changes against " .. repo.base)
+    local r = s.range
+    return notify(("no changes in %s"):format(r.target and spec or (r.left_label .. " → working tree")))
   end
   M.state = s
   M.show(1)
@@ -340,10 +361,9 @@ end
 
 function M.refresh()
   local s = M.state
-  if not s then
+  if not s or not load(s) then
     return
   end
-  load(s)
   if #s.flat == 0 then
     notify("no changes left")
     return M.close()
@@ -379,10 +399,21 @@ function M.close()
   cleanup(s)
 end
 
+--- generate_cmd with "{range}" replaced by the current spec.
+function M.generate_cmd(spec)
+  return vim.tbl_map(function(arg)
+    if not arg:find("{range}", 1, true) then
+      return arg
+    end
+    return vim.trim((arg:gsub("{range}", (spec:gsub("%%", "%%%%")))))
+  end, config.options.generate_cmd)
+end
+
 --- Run the diff-narrative skill (config.generate_cmd) and reload when done.
-function M.generate()
-  if not M.state then
-    M.open()
+--- With `spec`, (re)opens the view on that range first.
+function M.generate(spec)
+  if not M.state or (spec and spec ~= "" and vim.trim(spec) ~= M.state.spec) then
+    M.open(spec)
   end
   local s = M.state
   if not s then
@@ -391,11 +422,14 @@ function M.generate()
   if s.generating then
     return notify("already generating")
   end
-  load(s) -- refresh groups.json + fingerprint for the skill
+  if not load(s) then -- refresh groups.json + fingerprint for the skill
+    return
+  end
   s.generating = true
   redraw(s)
   notify("generating narrative…")
-  local ok, err = pcall(vim.system, config.options.generate_cmd, { cwd = s.repo.root, text = true }, vim.schedule_wrap(function(res)
+  local cmd = M.generate_cmd(s.spec)
+  local ok, err = pcall(vim.system, cmd, { cwd = s.repo.root, text = true }, vim.schedule_wrap(function(res)
     s.generating = false
     if M.state ~= s then
       return
@@ -414,7 +448,7 @@ function M.generate()
   if not ok then
     s.generating = false
     redraw(s)
-    notify("cannot run " .. config.options.generate_cmd[1] .. ": " .. tostring(err), vim.log.levels.ERROR)
+    notify("cannot run " .. cmd[1] .. ": " .. tostring(err), vim.log.levels.ERROR)
   end
 end
 

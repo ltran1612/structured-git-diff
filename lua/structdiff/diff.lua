@@ -85,17 +85,22 @@ local function read_head(abs)
   return head
 end
 
+local function rev_lines(s, rev, path)
+  local content = git.content(s.repo, rev, path)
+  return content and to_lines(content) or {}
+end
+
 --- Show `file` in the diff windows. Returns the right-hand buffer and whether
---- it is the real file (as opposed to a scratch buffer).
+--- it is the real file (as opposed to a scratch buffer). The right side is the
+--- real file only when comparing against the working tree.
 function M.show(s, file)
-  local label = s.repo.base == "HEAD" and "HEAD" or "empty"
+  local r = s.range
 
   local left_lines = {}
   if file.status ~= "?" and file.status ~= "A" then
-    local content = git.base_content(s.repo, file.old_path or file.path)
-    left_lines = content and to_lines(content) or {}
+    left_lines = rev_lines(s, r.base, file.old_path or file.path)
   end
-  local left = M.scratch(("structdiff://%s/%s"):format(label, file.path), left_lines, file.path)
+  local left = M.scratch(("structdiff://%s/%s"):format(r.left_label, file.path), left_lines, file.path)
 
   api.nvim_win_call(s.left_win, function()
     vim.cmd("diffoff!")
@@ -104,8 +109,12 @@ function M.show(s, file)
 
   local right, real = nil, false
   local abs = s.repo.root .. "/" .. file.path
-  local head = file.status ~= "D" and read_head(abs)
-  if not head then
+  local head = not r.target and file.status ~= "D" and read_head(abs)
+  if r.target then
+    local lines = file.status == "D" and {} or rev_lines(s, r.target, file.path)
+    right = M.scratch(("structdiff://%s/%s"):format(r.right_label, file.path), lines, file.path)
+    api.nvim_win_set_buf(s.right_win, right)
+  elseif not head then
     right = M.scratch("structdiff://deleted/" .. file.path, {}, file.path)
     api.nvim_win_set_buf(s.right_win, right)
   elseif is_binary(head) then

@@ -42,6 +42,7 @@ test("view groups files and navigates across groups", function()
     eq({ "Tests", "Docs", "Source" }, vim.tbl_map(function(g) return g.name end, s.grouped))
     local lines = panel_lines()
     eq(" StructDiff  4 files", lines[1])
+    eq(" HEAD → working tree", lines[2])
     assert(vim.tbl_contains(lines, "▾ Source (2)"), vim.inspect(lines))
     assert(vim.tbl_contains(lines, "  ? backoff.lua  lua"), vim.inspect(lines))
     eq("tests/core_spec.lua", s.current)
@@ -111,7 +112,7 @@ test("narrative file feeds reasons, order, and staleness", function()
     h.write(dir, "lua/util.lua", "return 3\n")
     sd.refresh()
     eq("stale", sd.state.narrative_state)
-    assert(panel_lines()[2]:match("stale"))
+    assert(panel_lines()[3]:match("stale"), panel_lines()[3])
   end)
 end)
 
@@ -142,5 +143,70 @@ test("layout is rebuilt when a diff window is closed", function()
     local s = sd.state
     assert(api.nvim_win_is_valid(s.left_win) and api.nvim_win_is_valid(s.sidebar_win))
     assert(vim.wo[s.left_win].diff)
+  end)
+end)
+
+test("branch range: read-only revisions on both sides, own narrative file", function()
+  local dir = branch_repo() -- from test_git.lua
+  in_view(dir, function()
+    sd.open("main...HEAD")
+    local s = sd.state
+    eq(" main...HEAD", panel_lines()[2])
+    eq({ "gone.md", "a.lua", "new.lua" }, vim.tbl_map(function(e) return e.file.path end, s.flat))
+    eq({ "" }, api.nvim_buf_get_lines(api.nvim_win_get_buf(s.right_win), 0, -1, false)) -- deleted on the branch
+    eq({ "g" }, api.nvim_buf_get_lines(api.nvim_win_get_buf(s.left_win), 0, -1, false))
+    sd.goto_file(1)
+    eq("a.lua", s.current)
+    eq("lua", vim.bo[api.nvim_win_get_buf(s.right_win)].filetype)
+    local right = api.nvim_win_get_buf(s.right_win)
+    eq("structdiff://HEAD/a.lua", api.nvim_buf_get_name(right))
+    eq({ "a feature" }, api.nvim_buf_get_lines(right, 0, -1, false)) -- committed, not the worktree edit
+    eq(false, vim.bo[right].modifiable)
+    eq("structdiff://merge-base(main)/a.lua", api.nvim_buf_get_name(api.nvim_win_get_buf(s.left_win)))
+    eq({ "a" }, api.nvim_buf_get_lines(api.nvim_win_get_buf(s.left_win), 0, -1, false))
+    eq(nil, s.real_buf)
+
+    local exported = vim.json.decode(table.concat(vim.fn.readfile(dir .. "/.structdiff/groups.json"), "\n"))
+    eq("main...HEAD", exported.range.spec)
+    eq(s.range.base, exported.range.base)
+    eq(".structdiff/narrative-main...HEAD.json", exported.output)
+
+    -- a narrative for the working tree must not leak into the branch view
+    h.write(dir, ".structdiff/narrative.json", vim.json.encode({ version = 1, overall = "worktree story" }))
+    sd.reload_narrative()
+    eq("none", s.narrative_state)
+    h.write(dir, ".structdiff/narrative-main...HEAD.json", vim.json.encode({ version = 1, fingerprint = s.fingerprint, overall = "branch story" }))
+    sd.reload_narrative()
+    eq("fresh", s.narrative_state)
+
+    -- uncommitted edits don't make a branch narrative stale
+    h.write(dir, "a.lua", "edited again\n")
+    sd.refresh()
+    eq("fresh", sd.state.narrative_state)
+
+    -- switching range replaces the view
+    sd.open("")
+    assert(sd.state ~= s)
+    eq(" HEAD → working tree", panel_lines()[2])
+  end)
+end)
+
+test("generate_cmd substitutes the range", function()
+  local cmd = sd.generate_cmd("main...HEAD")
+  eq("/diff-narrative main...HEAD", cmd[3])
+  eq("/diff-narrative", sd.generate_cmd("")[3])
+end)
+
+test("open reports an unknown revision without opening a tab", function()
+  in_view(sample_repo(), function()
+    local tabs = #api.nvim_list_tabpages()
+    local msgs = {}
+    local notify = vim.notify
+    vim.notify = function(m) table.insert(msgs, m) end
+    sd.open("nope...HEAD")
+    vim.notify = notify
+    eq(nil, sd.state)
+    eq(tabs, #api.nvim_list_tabpages())
+    eq({ "structdiff: unknown revision: nope" }, msgs)
   end)
 end)

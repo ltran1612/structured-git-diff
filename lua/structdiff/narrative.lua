@@ -9,8 +9,17 @@ function M.dir(root)
   return root .. "/.structdiff"
 end
 
-function M.path(root)
-  return M.dir(root) .. "/narrative.json"
+--- File name for a range spec: narrative.json for the working tree, otherwise
+--- narrative-<spec>.json with every char outside [A-Za-z0-9._-] replaced by _.
+function M.filename(spec)
+  if not spec or spec == "" then
+    return "narrative.json"
+  end
+  return "narrative-" .. spec:gsub("[^%w%._%-]", "_") .. ".json"
+end
+
+function M.path(root, spec)
+  return M.dir(root) .. "/" .. M.filename(spec)
 end
 
 --- Keep .structdiff/ out of `git status` without touching .gitignore.
@@ -39,8 +48,14 @@ local function write_json(path, data)
   fd:close()
 end
 
-function M.export_groups(root, grouped, fingerprint)
-  local out = { version = M.VERSION, fingerprint = fingerprint, groups = {} }
+function M.export_groups(root, range, grouped, fingerprint)
+  local out = {
+    version = M.VERSION,
+    fingerprint = fingerprint,
+    range = { spec = range.spec, base = range.base, target = range.target or vim.NIL },
+    output = ".structdiff/" .. M.filename(range.spec),
+    groups = {},
+  }
   for _, g in ipairs(grouped) do
     local files = {}
     for _, f in ipairs(g.files) do
@@ -91,8 +106,9 @@ function M.normalize(data)
 end
 
 --- @return table|nil narrative, string|nil error (nil, nil when absent)
-function M.load(root)
-  local fd = io.open(M.path(root), "r")
+function M.load(root, spec)
+  local path = M.path(root, spec)
+  local fd = io.open(path, "r")
   if not fd then
     return nil, nil
   end
@@ -100,7 +116,7 @@ function M.load(root)
   fd:close()
   local ok, data = pcall(vim.json.decode, text)
   if not ok then
-    return nil, "invalid JSON in " .. M.path(root)
+    return nil, "invalid JSON in " .. path
   end
   return M.normalize(data)
 end
@@ -117,15 +133,15 @@ function M.state(narrative, fingerprint)
 end
 
 --- Markdown for the narrative split.
-function M.render(narrative, grouped, state)
-  local lines = { "# Change narrative" }
+function M.render(narrative, grouped, state, spec)
+  local lines = { "# Change narrative" .. ((spec and spec ~= "") and (": " .. spec) or "") }
   if state == "stale" then
     vim.list_extend(lines, { "", "> **Stale:** the diff changed since this was written. Run `:StructDiffGenerate`." })
   elseif state == "unverified" then
     vim.list_extend(lines, { "", "> Written without a fingerprint; it may not match the current diff." })
   end
   if not narrative then
-    vim.list_extend(lines, { "", "No narrative yet. Run `:StructDiffGenerate` or `/diff-narrative` in Claude Code." })
+    vim.list_extend(lines, { "", ("No narrative yet. Run `:StructDiffGenerate` or `%s` in Claude Code."):format(vim.trim("/diff-narrative " .. (spec or ""))) })
     return lines
   end
   if narrative.overall ~= "" then
