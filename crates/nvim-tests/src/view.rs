@@ -220,7 +220,8 @@ fn user_closing_the_tab_cleans_up() {
     start(&r.root);
     open_wait(None);
     api::command("tabclose").unwrap();
-    assert!(wait_until(1000, || structdiff::with_view(|_| ()).is_none()));
+    // The poller checks for a closed tab every few ticks, not every tick.
+    assert!(wait_until(3000, || structdiff::with_view(|_| ()).is_none()));
 }
 
 #[nvim_oxi::test]
