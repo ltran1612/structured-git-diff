@@ -159,3 +159,15 @@ fn an_unreadable_repo_config_is_reported() {
     let (_, warning) = Grouping::default().for_repo(dir.path());
     assert!(warning.unwrap().contains("cannot read it"));
 }
+
+#[test]
+fn sort_by_order_is_fast_on_big_change_sets() {
+    let paths: Vec<String> = (0..10_000).map(|i| format!("src/file_{i:05}.rs")).collect();
+    let files: Vec<ChangedFile> = paths.iter().map(|p| ChangedFile::new('M', p)).collect();
+    let mut g = vec![Group { name: "Source".into(), files }];
+    let order: Vec<String> = paths.iter().rev().cloned().collect();
+    let started = std::time::Instant::now();
+    group::sort_by_order(&mut g, &order);
+    assert!(started.elapsed() < std::time::Duration::from_millis(500), "{:?}", started.elapsed());
+    assert_eq!(g[0].files[0].path, "src/file_09999.rs");
+}

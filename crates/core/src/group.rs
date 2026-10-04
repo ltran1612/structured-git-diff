@@ -208,9 +208,15 @@ pub fn sort_by_order(groups: &mut [Group], order: &[String]) {
     if order.is_empty() {
         return;
     }
-    let rank = |path: &str| order.iter().position(|p| p == path).unwrap_or(usize::MAX);
+    // Position of each path in `order` (its first appearance), looked up
+    // in O(1). A linear search per comparison was O(n² log n).
+    let mut positions: std::collections::HashMap<&str, usize> = std::collections::HashMap::with_capacity(order.len());
+    for (i, p) in order.iter().enumerate() {
+        positions.entry(p.as_str()).or_insert(i);
+    }
+    let rank = |path: &str| positions.get(path).copied().unwrap_or(usize::MAX);
     for g in groups.iter_mut() {
-        g.files.sort_by_key(|f| rank(&f.path)); // sort_by_key is stable
+        g.files.sort_by_cached_key(|f| rank(&f.path)); // stable, like sort_by_key
     }
     groups.sort_by_key(|g| g.files.first().map_or(usize::MAX, |f| rank(&f.path)));
 }
