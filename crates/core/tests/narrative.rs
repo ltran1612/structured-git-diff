@@ -69,7 +69,7 @@ fn render_includes_overall_group_why_and_file_reasons() {
     assert!(text.contains("- `a.lua` — adds x"));
     assert!(text.ends_with("- `b.lua`"));
     let none = narrative::render(None, &groups, State::None, "").join("\n");
-    assert!(none.contains("`/diff-narrative` in Claude Code"), "{none}");
+    assert!(none.contains("`/diff-narrative` in your agent"), "{none}");
 }
 
 #[test]
@@ -77,4 +77,13 @@ fn wrap() {
     assert_eq!(narrative::wrap("one two three four", 9), ["one two", "three", "four"]);
     assert_eq!(narrative::wrap("  ", 9), Vec::<String>::new());
     assert_eq!(narrative::wrap("supercalifragilistic word", 5), ["supercalifragilistic", "word"]);
+}
+
+#[test]
+fn equivalent_range_spellings_share_a_narrative() {
+    assert_eq!(narrative::filename("main..."), narrative::filename("main...HEAD"));
+    assert_eq!(narrative::filename("..main"), "narrative-HEAD..main.json");
+    assert_eq!(narrative::filename("main.."), "narrative-main..HEAD.json");
+    assert_eq!(narrative::filename(" main "), "narrative-main.json");
+    assert_eq!(narrative::canonical_spec("a...b"), "a...b");
 }

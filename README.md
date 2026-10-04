@@ -31,7 +31,7 @@ A grouped view of your working-tree diff for Neovim, with an AI-written narrativ
 
 - **Neovim 0.12.5.** The plugin binds Neovim's C API directly and only loads on Neovim versions it was checked against (see [Compatibility](#compatibility)).
 - A Rust toolchain (`cargo`) to build it, and git.
-- For narratives, [Claude Code](https://claude.com/claude-code).
+- For narratives, an agent CLI with skills: [Claude Code](https://claude.com/claude-code), Codex or GitHub Copilot CLI.
 
 ## Install
 
@@ -169,7 +169,7 @@ Once a narrative exists, its reading order wins: the group holding the story's f
 Everything lives in `<repo>/.structdiff/`. Viewing a diff writes nothing to your repo. structdiff itself creates the directory only in `:StructDiffGenerate` and `structdiff export`, and both add it to `.git/info/exclude` (best effort), so it doesn't show up in `git status`. The skills create it through `structdiff export` when it's installed. An agent without `structdiff` may create it unexcluded; add `/.structdiff/` to `.gitignore` if that bothers you.
 
 - `groups.json` (written by `structdiff export`, which the skill runs first, and by `:StructDiffGenerate`): the range (`spec`, resolved `base`/`target` SHAs), the `output` file name, the groups and their files, a `fingerprint` of the change set, and the `grouping` (patterns) that produced the groups.
-- `narrative.json` for the working tree, or `narrative-<range>.json` for a range (characters outside `A-Za-z0-9._-` become `_`, so `origin/main...HEAD` → `narrative-origin_main...HEAD.json`). The skill writes it in this shape:
+- `narrative.json` for the working tree, or `narrative-<range>.json` for a range. An empty side of `..` or `...` is written as `HEAD`, so `main...` and `main...HEAD` share one file, and characters outside `A-Za-z0-9._-` become `_` (`origin/main...` → `narrative-origin_main...HEAD.json`). The skill writes it in this shape:
 
 ```json
 {
@@ -218,7 +218,7 @@ opts = {
 
 Options you don't set keep their defaults. Lists such as `groups` and `generate_cmd` replace the default list rather than merging with it.
 
-Highlight groups (all `default` links, so you can override them): `StructDiffTitle`, `StructDiffGroup`, `StructDiffCount`, `StructDiffDir`, `StructDiffReason`, `StructDiffWhy`, `StructDiffCurrent`, `StructDiffAdded`, `StructDiffChanged`, `StructDiffRemoved`, `StructDiffFresh`, `StructDiffStale`, `StructDiffNone`.
+Highlight groups (all `default` links, so you can override them): `StructDiffTitle`, `StructDiffRange`, `StructDiffGroup`, `StructDiffCount`, `StructDiffDir`, `StructDiffReason`, `StructDiffWhy`, `StructDiffCurrent`, `StructDiffAdded`, `StructDiffChanged`, `StructDiffRemoved`, `StructDiffFresh`, `StructDiffStale`, `StructDiffNone`.
 
 ## Layout
 

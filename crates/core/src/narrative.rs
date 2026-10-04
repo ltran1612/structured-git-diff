@@ -32,14 +32,27 @@ fn writable_dir(root: &Path) -> std::io::Result<PathBuf> {
     Ok(d)
 }
 
-/// `narrative.json` for the working tree, otherwise `narrative-<spec>.json`
-/// with every character outside `[A-Za-z0-9._-]` replaced by `_`.
+/// `spec` with an empty side of `..` or `...` written out as `HEAD`, so
+/// `main...` and `main...HEAD` (the same range) share a narrative.
+pub fn canonical_spec(spec: &str) -> String {
+    let spec = spec.trim();
+    let Some(i) = spec.find("..") else { return spec.to_owned() };
+    let dots = if spec[i..].starts_with("...") { "..." } else { ".." };
+    let (a, b) = (&spec[..i], &spec[i + dots.len()..]);
+    format!("{}{dots}{}", if a.is_empty() { "HEAD" } else { a }, if b.is_empty() { "HEAD" } else { b })
+}
+
+/// `narrative.json` for the working tree, otherwise
+/// `narrative-<canonical spec>.json` (see [`canonical_spec`]) with every
+/// character outside `[A-Za-z0-9._-]` replaced by `_`.
 pub fn filename(spec: &str) -> String {
-    if spec.is_empty() {
+    if spec.trim().is_empty() {
         return "narrative.json".to_owned();
     }
-    let safe: String =
-        spec.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' }).collect();
+    let safe: String = canonical_spec(spec)
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' })
+        .collect();
     format!("narrative-{safe}.json")
 }
 
@@ -261,7 +274,7 @@ pub fn render(narrative: Option<&Narrative>, groups: &[Group], state: State, spe
     let Some(n) = narrative else {
         lines.push(String::new());
         let cmd = format!("/diff-narrative {spec}");
-        lines.push(format!("No narrative yet. Run `:StructDiffGenerate` or `{}` in Claude Code.", cmd.trim()));
+        lines.push(format!("No narrative yet. Run `:StructDiffGenerate`, or `{}` in your agent.", cmd.trim()));
         return lines;
     };
     if !n.overall.is_empty() {

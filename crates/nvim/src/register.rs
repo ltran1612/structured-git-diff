@@ -123,7 +123,7 @@ pub fn init() -> nvim_oxi::Result<Dictionary> {
     command("StructDiffClose", "Close the StructDiff view", actions::close)?;
     command("StructDiffRefresh", "Re-scan changes and reload the narrative", actions::refresh)?;
     command("StructDiffNarrative", "Toggle the narrative split", actions::toggle_narrative)?;
-    range_command("StructDiffGenerate", "Generate the change narrative with Claude: [range]", generate::generate)?;
+    range_command("StructDiffGenerate", "Generate the change narrative with the configured agent CLI: [range]", generate::generate)?;
     command("StructDiffCancel", "Stop a running :StructDiffGenerate", generate::cancel_generate)?;
     hl::apply();
 

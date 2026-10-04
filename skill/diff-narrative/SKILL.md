@@ -44,7 +44,7 @@ Run everything from the repo root (`git rev-parse --show-toplevel`). The range a
 
 An empty side of `..` or `...` means HEAD.
 
-The output file is `.structdiff/narrative.json` when the argument is empty. Otherwise it is `.structdiff/narrative-<arg>.json`, where every character outside `A-Za-z0-9._-` is replaced by `_`. For example, `main...HEAD` gives `narrative-main...HEAD.json`, and `origin/main..HEAD~1` gives `narrative-origin_main..HEAD_1.json`.
+The output file is `.structdiff/narrative.json` when the argument is empty. Otherwise it is `.structdiff/narrative-<arg>.json`, where an empty side of `..` or `...` is written as `HEAD`, and then every character outside `A-Za-z0-9._-` is replaced by `_`. For example, `main...` and `main...HEAD` both give `narrative-main...HEAD.json`, and `origin/main..HEAD~1` gives `narrative-origin_main..HEAD_1.json`. (`structdiff export` prints this path for you.)
 
 ## 2. Gather the change set
 

@@ -484,7 +484,7 @@ fn generator_is_chosen_from_setup() {
     assert_eq!(cmd("")[..3], ["copilot", "-p", "PROMPT"]);
     // generate_cmd overrides the generator entirely
     structdiff::setup(lua("{ generator = 'codex', generate_cmd = { 'my-agent', '{range}', '{output}' } }"));
-    assert_eq!(cmd("main.."), ["my-agent", "main..", ".structdiff/narrative-main...json"]);
+    assert_eq!(cmd("main.."), ["my-agent", "main..", ".structdiff/narrative-main..HEAD.json"]);
     // an unknown generator is reported and leaves the config alone
     capture_notifications();
     structdiff::setup(lua("{ generator = 'gpt' }"));
