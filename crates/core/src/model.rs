@@ -1,8 +1,11 @@
 //! The loaded change set: range, files, groups, narrative and display order.
-//! Everything the viewer shows, without any UI.
+//! Everything the viewer shows, without any UI. Loading only reads: nothing
+//! is written to the repo until [`Model::export`].
+
+use std::path::PathBuf;
 
 use crate::git::{ChangedFile, Range, Repo};
-use crate::group::{self, Compiled, Group, GroupDef};
+use crate::group::{self, Compiled, Group, Grouping};
 use crate::narrative::{self, Narrative, State};
 
 #[derive(Clone)]
@@ -15,14 +18,12 @@ pub struct Model {
     pub groups: Vec<Group>,
     pub narrative: Option<Narrative>,
     pub state: State,
-    defs: Vec<GroupDef>,
-    other: String,
 }
 
 impl Model {
-    /// Resolve `spec`, scan the change set, load its narrative and write
-    /// groups.json. Returns non-fatal warnings alongside the model.
-    pub fn load(repo: Repo, spec: &str, defs: &[GroupDef], other: &str) -> Result<(Self, Vec<String>), String> {
+    /// Resolve `spec`, scan the change set and load its narrative. Returns
+    /// non-fatal warnings alongside the model.
+    pub fn load(repo: Repo, spec: &str, grouping: &Grouping) -> Result<(Self, Vec<String>), String> {
         let spec = spec.trim().to_owned();
         let range = repo.resolve_range(&spec)?;
         let mut model = Self {
@@ -34,32 +35,22 @@ impl Model {
             groups: Vec::new(),
             narrative: None,
             state: State::None,
-            defs: defs.to_vec(),
-            other: other.to_owned(),
         };
-        let warnings = model.rescan()?;
+        let warnings = model.rescan(grouping)?;
         Ok((model, warnings))
     }
 
-    /// Re-resolve the range (branches move), rescan and re-export.
-    pub fn rescan(&mut self) -> Result<Vec<String>, String> {
+    /// Re-resolve the range (branches move) and rescan.
+    pub fn rescan(&mut self, grouping: &Grouping) -> Result<Vec<String>, String> {
         self.range = self.repo.resolve_range(&self.spec)?;
-        let mut warnings = Vec::new();
-        if let Err(e) = narrative::ensure_excluded(&self.repo.exclude) {
-            warnings.push(format!("cannot update {}: {e}", self.repo.exclude.display()));
-        }
         let scan = self.repo.scan(&self.range)?;
         self.files = scan.files;
         self.fingerprint = scan.fingerprint;
-        warnings.extend(self.reload_narrative());
-        if let Err(e) = narrative::export_groups(&self.repo.root, &self.range, &self.groups, &self.fingerprint) {
-            warnings.push(format!("cannot write groups.json: {e}"));
-        }
-        Ok(warnings)
+        Ok(self.reload_narrative(grouping))
     }
 
     /// Reload only the narrative file and regroup by its reading order.
-    pub fn reload_narrative(&mut self) -> Vec<String> {
+    pub fn reload_narrative(&mut self, grouping: &Grouping) -> Vec<String> {
         let mut warnings = Vec::new();
         self.narrative = match Narrative::load(&self.repo.root, &self.spec) {
             Ok(n) => n,
@@ -69,15 +60,23 @@ impl Model {
             }
         };
         self.state = narrative::state(self.narrative.as_ref(), &self.fingerprint);
-        let (defs, warning) = group::groups_for(&self.repo.root, &self.defs);
+        let (grouping, warning) = grouping.for_repo(&self.repo.root);
         warnings.extend(warning);
-        let (compiled, bad) = Compiled::new(&defs);
+        let (compiled, bad) = Compiled::new(&grouping.groups);
         warnings.extend(bad);
-        self.groups = group::assign(&self.files, &compiled, &self.other);
+        self.groups = group::assign(&self.files, &compiled, &grouping.other);
         if let Some(n) = &self.narrative {
             group::sort_by_order(&mut self.groups, &n.order);
         }
         warnings
+    }
+
+    /// Write `.structdiff/groups.json` for the diff-narrative skill (and
+    /// exclude `.structdiff/` from git). The only write to the repo.
+    pub fn export(&self, grouping: &Grouping) -> Result<PathBuf, String> {
+        let (grouping, _) = grouping.for_repo(&self.repo.root);
+        narrative::export_groups(&self.repo, &self.range, &self.groups, &self.fingerprint, &grouping)
+            .map_err(|e| format!("cannot write {}: {e}", narrative::dir(&self.repo.root).join("groups.json").display()))
     }
 
     /// Display order of all files: (group index, file index). `]f` walks it.

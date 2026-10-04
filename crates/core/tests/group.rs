@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use structdiff_core::ChangedFile;
-use structdiff_core::group::{self, Compiled, Group, GroupDef};
+use structdiff_core::group::{self, Compiled, Group, GroupDef, Grouping};
 
 fn files(paths: &[&str]) -> Vec<ChangedFile> {
     paths.iter().map(|p| ChangedFile::new('M', p)).collect()
@@ -77,14 +77,16 @@ fn sort_by_order_puts_the_group_holding_the_first_file_first() {
 }
 
 #[test]
-fn repo_config_replaces_groups() {
+fn repo_config_replaces_groups_but_keeps_the_fallback_name() {
     let dir = tempfile::tempdir().unwrap();
-    let defaults = group::default_groups();
-    assert_eq!(group::groups_for(dir.path(), &defaults), (defaults.clone(), None));
+    let configured = Grouping { groups: group::default_groups(), other: "Misc".into() };
+    assert_eq!(configured.for_repo(dir.path()), (configured.clone(), None));
     std::fs::write(dir.path().join(".structdiff.json"), r#"{"groups":[{"name":"Migrations","patterns":["^db/"]}]}"#).unwrap();
-    assert_eq!(group::groups_for(dir.path(), &defaults).0, vec![GroupDef::new("Migrations", &["^db/"])]);
+    let (repo, _) = configured.for_repo(dir.path());
+    assert_eq!(repo.groups, vec![GroupDef::new("Migrations", &["^db/"])]);
+    assert_eq!(repo.other, "Misc");
     std::fs::write(dir.path().join(".structdiff.json"), "{oops").unwrap();
-    let (groups, warning) = group::groups_for(dir.path(), &defaults);
-    assert_eq!(groups, defaults);
+    let (fallback, warning) = configured.for_repo(dir.path());
+    assert_eq!(fallback, configured);
     assert!(warning.unwrap().starts_with("ignoring invalid"));
 }

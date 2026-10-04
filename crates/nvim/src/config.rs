@@ -2,7 +2,7 @@
 
 use nvim_oxi::Object;
 use serde::Deserialize;
-use structdiff_core::GroupDef;
+use structdiff_core::{GroupDef, Grouping};
 use structdiff_core::group::default_groups;
 
 /// One key or several: `"]g"` or `{ "za", "<Tab>" }`.
@@ -89,6 +89,7 @@ impl Default for Config {
                 "acceptEdits",
                 "--allowedTools",
                 "Bash(git:*)",
+                "Bash(structdiff export:*)",
                 "Read",
                 "Write",
             ]
@@ -113,6 +114,10 @@ impl Config {
             return Ok(Self::default());
         }
         Self::deserialize(nvim_oxi::serde::Deserializer::new(obj)).map_err(|e| format!("invalid setup options: {e}"))
+    }
+
+    pub fn grouping(&self) -> Grouping {
+        Grouping { groups: self.groups.clone(), other: self.other_group.clone() }
     }
 
     /// generate_cmd with "{range}" replaced by `spec`.

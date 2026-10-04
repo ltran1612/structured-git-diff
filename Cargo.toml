@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/nvim", "crates/nvim-tests"]
-default-members = ["crates/core", "crates/nvim"]
+members = ["crates/core", "crates/cli", "crates/nvim", "crates/nvim-tests"]
+default-members = ["crates/core", "crates/cli", "crates/nvim"]
 
 [workspace.package]
 version = "0.2.0"

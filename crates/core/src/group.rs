@@ -47,20 +47,36 @@ pub fn default_groups() -> Vec<GroupDef> {
     ]
 }
 
-/// Groups for a repo: `<root>/.structdiff.json` `{"groups": [...]}` replaces
-/// `configured` when present. Returns a warning when that file is invalid.
-pub fn groups_for(root: &Path, configured: &[GroupDef]) -> (Vec<GroupDef>, Option<String>) {
-    #[derive(Deserialize)]
-    struct RepoConfig {
-        groups: Vec<GroupDef>,
+/// How files are grouped: ordered definitions plus the fallback group name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grouping {
+    pub groups: Vec<GroupDef>,
+    pub other: String,
+}
+
+impl Default for Grouping {
+    fn default() -> Self {
+        Self { groups: default_groups(), other: "Other".to_owned() }
     }
-    let path = root.join(".structdiff.json");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return (configured.to_vec(), None);
-    };
-    match serde_json::from_str::<RepoConfig>(&text) {
-        Ok(cfg) => (cfg.groups, None),
-        Err(e) => (configured.to_vec(), Some(format!("ignoring invalid {}: {e}", path.display()))),
+}
+
+impl Grouping {
+    /// The grouping for a repo: `<root>/.structdiff.json` `{"groups": [...]}`
+    /// replaces `self.groups` when present. Returns a warning when that file
+    /// is invalid.
+    pub fn for_repo(&self, root: &Path) -> (Grouping, Option<String>) {
+        #[derive(Deserialize)]
+        struct RepoConfig {
+            groups: Vec<GroupDef>,
+        }
+        let path = root.join(".structdiff.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return (self.clone(), None);
+        };
+        match serde_json::from_str::<RepoConfig>(&text) {
+            Ok(cfg) => (Grouping { groups: cfg.groups, other: self.other.clone() }, None),
+            Err(e) => (self.clone(), Some(format!("ignoring invalid {}: {e}", path.display()))),
+        }
     }
 }
 

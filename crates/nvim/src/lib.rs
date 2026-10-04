@@ -117,10 +117,10 @@ fn open_then(spec: String, then: Then) {
         Err(e) => return ui::notify(&format!("not a git repository: {e}"), ui::ERROR),
     };
     let cfg = config();
-    let (groups, other) = (cfg.groups.clone(), cfg.other_group.clone());
+    let grouping = cfg.grouping();
     LOADING.with(|l| l.set(true));
     let started = bg::spawn(
-        move || Model::load(repo, &spec, &groups, &other),
+        move || Model::load(repo, &spec, &grouping),
         move |res| {
             LOADING.with(|l| l.set(false));
             if finish_open(res, cfg)
@@ -181,6 +181,7 @@ pub fn refresh() {
 }
 
 fn refresh_then(then: Then) {
+    let grouping = config().grouping();
     let Some((mut model, scan)) = with_view(|v| {
         v.scan_gen += 1;
         v.pending_scans += 1;
@@ -190,7 +191,7 @@ fn refresh_then(then: Then) {
     };
     let started = bg::spawn(
         move || {
-            let res = model.rescan();
+            let res = model.rescan(&grouping);
             (model, res)
         },
         move |(model, res)| {
@@ -227,7 +228,7 @@ fn refresh_then(then: Then) {
 
 pub fn reload_narrative() {
     with_view(|v| {
-        notify_all(v.model.reload_narrative());
+        notify_all(v.model.reload_narrative(&config().grouping()));
         v.redraw();
     });
 }
@@ -374,11 +375,14 @@ fn start_generate() {
     })
     .flatten();
     let Some((mut model, cmd)) = started else { return };
+    let grouping = config().grouping();
     ui::notify("generating narrative…", ui::INFO);
     let spawned = bg::spawn(
         move || {
-            // Refresh groups.json and the fingerprint for the skill.
-            model.rescan()?;
+            // Hand the skill the current change set and these groups. This is
+            // the only place the plugin writes to the repo.
+            model.rescan(&grouping)?;
+            model.export(&grouping)?;
             run_generate_cmd(&cmd, &model.repo.root)
         },
         generated,

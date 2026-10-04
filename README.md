@@ -48,7 +48,11 @@ lazy.nvim:
 }
 ```
 
-`build.sh` runs `cargo build --release` and installs the library as `lua/structdiff.so`, where `require("structdiff")` finds it. `main` is needed because lazy.nvim only auto-detects Lua modules. After pulling changes, rebuild with `:Lazy build structdiff.nvim` and restart Neovim.
+`build.sh` runs `cargo build --release` and:
+- installs the plugin as `lua/structdiff.so`, where `require("structdiff")` finds it;
+- installs the `structdiff` command (used by the skill) into `~/.local/bin`, or into `$STRUCTDIFF_BIN_DIR` if set. That directory must be on your `PATH`.
+
+`main` is needed because lazy.nvim only auto-detects Lua modules. After pulling changes, rebuild with `:Lazy build structdiff.nvim` and restart Neovim.
 
 Install the skill so Claude Code can find it:
 
@@ -123,9 +127,9 @@ Groups are displayed in config order. Once a narrative exists, the group holding
 
 ## The narrative contract
 
-Everything lives in `<repo>/.structdiff/`, which the plugin adds to `.git/info/exclude`, so it never shows up in `git status`.
+Everything lives in `<repo>/.structdiff/`. Viewing a diff writes nothing to your repo. The directory is only created by `:StructDiffGenerate` or `structdiff export`, and both add it to `.git/info/exclude`, so it never shows up in `git status`.
 
-- `groups.json` (written by the viewer on every open and refresh): the range (`spec`, resolved `base`/`target` SHAs), the `output` file name, the groups and their files, and a `fingerprint` of the change set.
+- `groups.json` (written by `structdiff export`, which the skill runs first, and by `:StructDiffGenerate`): the range (`spec`, resolved `base`/`target` SHAs), the `output` file name, the groups and their files, a `fingerprint` of the change set, and the `grouping` (patterns) that produced the groups.
 - `narrative.json` for the working tree, or `narrative-<range>.json` for a range (characters outside `A-Za-z0-9._-` become `_`, so `origin/main...HEAD` → `narrative-origin_main...HEAD.json`). The skill writes it in this shape:
 
 ```json
@@ -144,6 +148,14 @@ Each range has its own file, so reviewing a branch and then going back to your u
 The fingerprint is a sha256 over each changed file's status, modes and content hashes (from `git diff --raw`, plus `git hash-object` for working-tree and untracked files), so it never builds the patch itself. Staging a change doesn't alter it; editing content does. If the diff changes after the narrative was written, the sidebar shows **narrative stale**. The old narrative stays visible until you regenerate it.
 
 Any tool can produce this file. The skill is just the default producer.
+
+## The `structdiff` command
+
+```sh
+structdiff export [RANGE]   # write .structdiff/groups.json for RANGE and print its path
+```
+
+`RANGE` works as in `:StructDiff`. The command computes the change set exactly as the viewer does, so a narrative written from any Claude Code session (`/diff-narrative main...HEAD`) shows as up to date in Neovim. Groups come from the repo's `.structdiff.json` if present, otherwise from the grouping recorded by the last export (so your Neovim `groups` config carries over), otherwise the defaults.
 
 ## Configuration
 
@@ -169,8 +181,9 @@ Highlight groups (all `default` links, so you can override them): `StructDiffTit
 
 | Crate | What it is |
 |---|---|
-| `crates/core` (`structdiff-core`) | Everything that doesn't need Neovim: git and ranges, grouping, the narrative file contract, and the `Model` the view displays. Plain Rust, no Neovim dependency. |
-| `crates/nvim` (`structdiff`) | The plugin: a `cdylib` loaded by Neovim. Layout, diff panes, sidebar, keymaps, commands, the narrative watcher and background generation. |
+| `crates/core` (`structdiff-core`) | Everything that doesn't need Neovim: git and ranges, grouping, the narrative file contract, and the `Model` the view displays. Plain Rust; loading a model only reads. |
+| `crates/cli` (`structdiff-cli`) | The `structdiff` command, for the skill. |
+| `crates/nvim` (`structdiff`) | The plugin: a `cdylib` loaded by Neovim. Git work runs on background threads; Neovim's main loop only draws. |
 | `crates/nvim-tests` | Tests that run inside a real Neovim through nvim-oxi's test harness. |
 
 `plugin/structdiff.lua` is a single `require("structdiff")`. Neovim can only load native modules through `require`, so that line is the whole Lua side.
@@ -181,7 +194,7 @@ Highlight groups (all `default` links, so you can override them): `StructDiffTit
 ./check.sh
 ```
 
-This runs strict clippy (`-D warnings`, which includes the ban on broken nvim-oxi bindings), the core tests, and the tests that run inside Neovim (they need the supported Neovim on `PATH`).
+This runs strict clippy (`-D warnings`, which includes the ban on broken nvim-oxi bindings), the core and CLI tests, and the tests that run inside Neovim (they need the supported Neovim on `PATH`).
 
 ## Compatibility
 

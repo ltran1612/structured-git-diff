@@ -543,6 +543,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "structdiff-cli"
+version = "0.2.0"
+dependencies = [
+ "serde_json",
+ "structdiff-core",
+ "tempfile",
+]
+
+[[package]]
 name = "structdiff-core"
 version = "0.2.0"
 dependencies = [

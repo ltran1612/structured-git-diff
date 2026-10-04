@@ -55,6 +55,7 @@ fn narrative_feeds_reasons_order_split_and_staleness() {
     start(&r.root);
     open_wait(None);
     let fp = structdiff::with_view(|v| v.model.fingerprint.clone()).unwrap();
+    std::fs::create_dir_all(narrative::dir(&r.root)).unwrap();
     std::fs::write(
         narrative::path(&r.root, ""),
         serde_json::json!({
@@ -94,6 +95,7 @@ fn watcher_reloads_when_the_narrative_file_is_written() {
     start(&r.root);
     open_wait(None);
     let fp = structdiff::with_view(|v| v.model.fingerprint.clone()).unwrap();
+    std::fs::create_dir_all(narrative::dir(&r.root)).unwrap();
     std::fs::write(narrative::path(&r.root, ""), serde_json::json!({"fingerprint": fp, "overall": "x"}).to_string()).unwrap();
     assert!(wait_until(3000, || structdiff::with_view(|v| v.model.state) == Some(State::Fresh)));
     structdiff::close();
@@ -121,6 +123,8 @@ fn generate_runs_the_command_in_the_background_and_reloads() {
     let overall = structdiff::with_view(|v| v.model.narrative.as_ref().map(|n| n.overall.clone())).flatten();
     assert_eq!(overall.as_deref(), Some("generated for []"));
     assert_eq!(structdiff::with_view(|v| v.narrative_open()), Some(true));
+    // generating is what exports groups.json for the skill
+    assert!(r.root.join(".structdiff/groups.json").exists());
     structdiff::close();
 }
 
@@ -271,4 +275,17 @@ fn version_guard_is_an_exact_allowlist_with_an_explicit_opt_out() {
     assert!(err.contains("structdiff_allow_untested_nvim"), "{err}");
     api::set_var("structdiff_allow_untested_nvim", true).unwrap();
     assert_eq!(structdiff::check_neovim(&[(0, 12, 4)]), Ok(()));
+}
+
+#[nvim_oxi::test]
+fn viewing_writes_nothing_to_the_repo() {
+    let r = sample_repo();
+    start(&r.root);
+    let exclude = std::fs::read_to_string(r.root.join(".git/info/exclude")).unwrap_or_default();
+    open_wait(None);
+    refresh_wait();
+    structdiff::goto_file(1);
+    structdiff::close();
+    assert!(!r.root.join(".structdiff").exists());
+    assert_eq!(std::fs::read_to_string(r.root.join(".git/info/exclude")).unwrap_or_default(), exclude);
 }

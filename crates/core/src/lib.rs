@@ -8,6 +8,6 @@ pub mod model;
 pub mod narrative;
 
 pub use git::{ChangedFile, Range, Repo};
-pub use group::{Group, GroupDef};
+pub use group::{Group, GroupDef, Grouping};
 pub use model::Model;
 pub use narrative::{Narrative, State};

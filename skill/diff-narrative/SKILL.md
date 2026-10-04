@@ -26,16 +26,16 @@ The output file is `.structdiff/narrative.json` when the argument is empty. Othe
 
 ## 2. Gather the change set
 
-- Read `.structdiff/groups.json` if it exists. The viewer writes it, and it has this shape:
+- Run `structdiff export '<argument>'` from the repo root (`structdiff export` with no argument for the working tree). It writes `.structdiff/groups.json`, computed exactly as the Neovim viewer computes it, and prints the file's path. Read that file:
   ```json
   {"version":1,"fingerprint":"<sha256>","range":{"spec":"main...HEAD","base":"<sha>","target":"<sha or null>"},
    "output":".structdiff/narrative-main...HEAD.json",
-   "groups":[{"name":"Source","files":[{"path":"lua/a.lua","status":"M"}]}]}
+   "groups":[{"name":"Source","files":[{"path":"lua/a.lua","status":"M"}]}],
+   "grouping":{...}}
   ```
-  Status is one of `M A D R C U`, or `?` for untracked. `old_path` is set on renames.
-  - If `range.spec` equals your argument (both may be empty), groups.json is authoritative. Use exactly its group names and files, write to its `output` path, and copy `fingerprint` unchanged. Diff exactly `range.base` against `range.target` (`git diff <base> <target>`), or against the working tree when `target` is null.
-  - If it describes a different range, ignore it.
-- Without a matching groups.json, list the files yourself (`git diff --name-status` with the range from the table, plus `git ls-files --others --exclude-standard` when comparing against the working tree). Group them sensibly: Source, Tests, Docs, Config/Build, CI, Other. Omit `fingerprint`.
+  Status is one of `M A D R C U`, or `?` for untracked. `old_path` is set on renames. You can ignore `grouping`.
+  It is authoritative: use exactly its group names and files, write to its `output` path, and copy `fingerprint` unchanged. Diff exactly `range.base` against `range.target` (`git diff <base> <target>`), or against the working tree when `target` is null.
+- Only if `structdiff` is not installed (command not found): list the files yourself (`git diff --name-status` with the range from the table, plus `git ls-files --others --exclude-standard` when comparing against the working tree), group them sensibly (Source, Tests, Docs, Config/Build, CI, Other), write to the output path from step 1, and omit `fingerprint`. The viewer will show the narrative as unverified.
 - For a commit range, also read `git log --format='%h %s%n%b' <base>..<target>`. Commit messages are evidence of intent, but check them against the code. In the narrative, prefer what the code shows.
 - Read the diff. On a repo with no commits, use `git diff --cached` plus the files themselves. Read untracked files directly. For large diffs, start with `--stat`, then read per file. For commit ranges, read file contents with `git show <rev>:<path>`, not from the working tree, which may hold other, uncommitted edits.
 - Where a hunk's purpose is unclear, open the surrounding code. Callers, definitions and tests usually explain the change.

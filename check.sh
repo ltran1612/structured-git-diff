@@ -4,5 +4,5 @@
 set -eu
 cd "$(dirname "$0")"
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p structdiff-core
+cargo test -p structdiff-core -p structdiff-cli
 cargo test -p structdiff-nvim-tests

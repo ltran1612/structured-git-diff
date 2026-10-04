@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::git::Range;
-use crate::group::Group;
+use crate::git::{Range, Repo};
+use crate::group::{Group, Grouping};
 
 pub const VERSION: u32 = 1;
 
@@ -77,10 +77,22 @@ struct Export<'a> {
     range: ExportRange<'a>,
     output: String,
     groups: Vec<ExportGroup<'a>>,
+    /// The definitions that produced `groups`, so a later
+    /// `structdiff export` outside Neovim groups the same way.
+    grouping: &'a Grouping,
 }
 
-/// Write `groups.json` for the skill.
-pub fn export_groups(root: &Path, range: &Range, groups: &[Group], fingerprint: &str) -> std::io::Result<()> {
+/// Write `<root>/.structdiff/groups.json` for the skill, first making sure
+/// `.structdiff/` is excluded from git. Returns the file's path.
+pub fn export_groups(
+    repo: &Repo,
+    range: &Range,
+    groups: &[Group],
+    fingerprint: &str,
+    grouping: &Grouping,
+) -> std::io::Result<PathBuf> {
+    ensure_excluded(&repo.exclude)?;
+    let root = &repo.root;
     let export = Export {
         version: VERSION,
         fingerprint,
@@ -97,9 +109,23 @@ pub fn export_groups(root: &Path, range: &Range, groups: &[Group], fingerprint: 
                     .collect(),
             })
             .collect(),
+        grouping,
     };
     std::fs::create_dir_all(dir(root))?;
-    std::fs::write(dir(root).join("groups.json"), serde_json::to_vec(&export)?)
+    let path = dir(root).join("groups.json");
+    std::fs::write(&path, serde_json::to_vec(&export)?)?;
+    Ok(path)
+}
+
+/// The grouping recorded by the last export, if any. Lets `structdiff
+/// export` reuse the groups configured in Neovim.
+pub fn exported_grouping(root: &Path) -> Option<Grouping> {
+    #[derive(serde::Deserialize)]
+    struct Previous {
+        grouping: Grouping,
+    }
+    let text = std::fs::read_to_string(dir(root).join("groups.json")).ok()?;
+    serde_json::from_str::<Previous>(&text).ok().map(|p| p.grouping)
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -1,0 +1,16 @@
+[package]
+name = "structdiff-cli"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "structdiff"
+path = "src/main.rs"
+
+[dependencies]
+structdiff-core = { workspace = true }
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
