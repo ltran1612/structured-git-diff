@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use crate::error::{Error, Result};
 use crate::git::{ChangedFile, Range, Repo};
 use crate::group::{self, Compiled, Group, Grouping};
 use crate::narrative::{self, Narrative, State};
@@ -23,7 +24,7 @@ pub struct Model {
 impl Model {
     /// Resolve `spec`, scan the change set and load its narrative. Returns
     /// non-fatal warnings alongside the model.
-    pub fn load(repo: Repo, spec: &str, grouping: &Grouping) -> Result<(Self, Vec<String>), String> {
+    pub fn load(repo: Repo, spec: &str, grouping: &Grouping) -> Result<(Self, Vec<String>)> {
         let spec = spec.trim().to_owned();
         let range = repo.resolve_range(&spec)?;
         let mut model = Self {
@@ -41,7 +42,7 @@ impl Model {
     }
 
     /// Re-resolve the range (branches move) and rescan.
-    pub fn rescan(&mut self, grouping: &Grouping) -> Result<Vec<String>, String> {
+    pub fn rescan(&mut self, grouping: &Grouping) -> Result<Vec<String>> {
         self.range = self.repo.resolve_range(&self.spec)?;
         let scan = self.repo.scan(&self.range)?;
         self.files = scan.files;
@@ -55,7 +56,7 @@ impl Model {
         self.narrative = match Narrative::load(&self.repo.root, &self.spec) {
             Ok(n) => n,
             Err(e) => {
-                warnings.push(e);
+                warnings.push(e.to_string());
                 None
             }
         };
@@ -73,10 +74,10 @@ impl Model {
 
     /// Write `.structdiff/groups.json` for the diff-narrative skill (and
     /// exclude `.structdiff/` from git). The only write to the repo.
-    pub fn export(&self, grouping: &Grouping) -> Result<PathBuf, String> {
+    pub fn export(&self, grouping: &Grouping) -> Result<PathBuf> {
         let (grouping, _) = grouping.for_repo(&self.repo.root);
         narrative::export_groups(&self.repo, &self.range, &self.groups, &self.fingerprint, &grouping)
-            .map_err(|e| format!("cannot write {}: {e}", narrative::dir(&self.repo.root).join("groups.json").display()))
+            .map_err(|source| Error::Io { path: narrative::dir(&self.repo.root).join("groups.json"), source })
     }
 
     /// Display order of all files: (group index, file index). `]f` walks it.

@@ -35,8 +35,8 @@ fn start() {
         move || {
             // Hand the skill the current change set and these groups. This is
             // the only place the plugin writes to the repo.
-            model.rescan(&grouping)?;
-            model.export(&grouping)?;
+            model.rescan(&grouping).map_err(|e| e.to_string())?;
+            model.export(&grouping).map_err(|e| e.to_string())?;
             run(&cmd, &model.repo.root)
         },
         finished,

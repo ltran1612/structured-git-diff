@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use structdiff_core::{Grouping, Model, Repo, State, narrative};
+use structdiff_core::{Error, Grouping, Model, Repo, State, narrative};
 
 fn load(root: &std::path::Path, spec: &str) -> Model {
     let (m, warnings) = Model::load(Repo::discover(root).unwrap(), spec, &Grouping::default()).unwrap();
@@ -89,5 +89,6 @@ fn branch_range_has_its_own_narrative_and_ignores_worktree_edits() {
 fn unknown_range_fails_to_load() {
     let r = repo(&[("a", "a\n")]);
     let err = Model::load(Repo::discover(&r.root).unwrap(), "nope...HEAD", &Grouping::default()).err().unwrap();
-    assert_eq!(err, "unknown revision: nope");
+    assert!(matches!(&err, Error::UnknownRevision(rev) if rev == "nope"), "{err:?}");
+    assert_eq!(err.to_string(), "unknown revision: nope");
 }

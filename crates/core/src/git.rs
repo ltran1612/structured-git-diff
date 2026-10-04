@@ -8,6 +8,8 @@ use std::process::{Command, Stdio};
 
 use sha2::{Digest, Sha256};
 
+use crate::error::{Error, Result};
+
 /// `git hash-object -t tree /dev/null`: the base when the repo has no commits.
 pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -52,33 +54,37 @@ impl ChangedFile {
     }
 }
 
-fn run_raw(cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>, String> {
+fn run_raw(cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(cwd).args(args);
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("cannot run git: {e}"))?;
+    let mut child = cmd.spawn().map_err(Error::GitUnavailable)?;
     if let Some(input) = stdin {
         let mut pipe = child.stdin.take().expect("piped stdin");
-        pipe.write_all(input).map_err(|e| e.to_string())?;
+        pipe.write_all(input).map_err(Error::GitUnavailable)?;
     }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(Error::GitUnavailable)?;
     if out.status.success() {
         Ok(out.stdout)
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+        Err(Error::Git { args: args.join(" "), stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned() })
     }
 }
 
-fn run(cwd: &Path, args: &[&str]) -> Result<String, String> {
+fn run(cwd: &Path, args: &[&str]) -> Result<String> {
     run_raw(cwd, args, None).map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
 impl Repo {
     /// The repo containing `dir`, or an error when it is not in a work tree.
-    pub fn discover(dir: &Path) -> Result<Self, String> {
-        let root = PathBuf::from(run(dir, &["rev-parse", "--show-toplevel"])?.trim());
+    pub fn discover(dir: &Path) -> Result<Self> {
+        let toplevel = run(dir, &["rev-parse", "--show-toplevel"]).map_err(|e| match e {
+            Error::Git { stderr, .. } => Error::NotARepo(stderr),
+            other => other,
+        })?;
+        let root = PathBuf::from(toplevel.trim());
         let exclude = run(&root, &["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"])?;
         Ok(Self { exclude: PathBuf::from(exclude.trim()), root })
     }
@@ -95,7 +101,7 @@ impl Repo {
     ///   "A..B"    A vs B
     ///   "A...B"   merge-base(A, B) vs B, i.e. what B adds on top of A
     /// An empty side of ".." / "..." means HEAD.
-    pub fn resolve_range(&self, spec: &str) -> Result<Range, String> {
+    pub fn resolve_range(&self, spec: &str) -> Result<Range> {
         let spec = spec.trim();
         if spec.is_empty() {
             let head = self.commit("HEAD").is_some();
@@ -108,7 +114,7 @@ impl Repo {
             });
         }
         let Some(dots_at) = spec.find("..") else {
-            let sha = self.commit(spec).ok_or_else(|| format!("unknown revision: {spec}"))?;
+            let sha = self.commit(spec).ok_or_else(|| Error::UnknownRevision(spec.to_owned()))?;
             return Ok(Range {
                 spec: spec.to_owned(),
                 base: sha,
@@ -122,11 +128,11 @@ impl Repo {
         let b = &spec[dots_at + if three { 3 } else { 2 }..];
         let a = if a.is_empty() { "HEAD" } else { a };
         let b = if b.is_empty() { "HEAD" } else { b };
-        let asha = self.commit(a).ok_or_else(|| format!("unknown revision: {a}"))?;
-        let bsha = self.commit(b).ok_or_else(|| format!("unknown revision: {b}"))?;
+        let asha = self.commit(a).ok_or_else(|| Error::UnknownRevision(a.to_owned()))?;
+        let bsha = self.commit(b).ok_or_else(|| Error::UnknownRevision(b.to_owned()))?;
         let (base, left_label) = if three {
             let mb = run(&self.root, &["merge-base", &asha, &bsha])
-                .map_err(|_| format!("no merge base between {a} and {b}"))?;
+                .map_err(|_| Error::NoMergeBase { a: a.to_owned(), b: b.to_owned() })?;
             (mb.trim().to_owned(), format!("merge-base({a})"))
         } else {
             (asha, a.to_owned())
@@ -147,7 +153,7 @@ impl Repo {
     /// fingerprint, from a single `git diff --raw` plus hashing of working-tree
     /// files git didn't hash itself. Against the working tree this includes
     /// staged, unstaged and untracked files.
-    pub fn scan(&self, range: &Range) -> Result<Scan, String> {
+    pub fn scan(&self, range: &Range) -> Result<Scan> {
         let raw = run_raw(&self.root, &Self::diff_args(range, &["--raw", "-z", "--abbrev=40", "-M", "--no-ext-diff"]), None)?;
         let entries = parse_raw(&String::from_utf8_lossy(&raw));
         let mut files: Vec<ChangedFile> = entries.iter().map(|e| e.file.clone()).collect();

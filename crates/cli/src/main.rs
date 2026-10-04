@@ -5,7 +5,7 @@
 
 use std::process::ExitCode;
 
-use structdiff_core::{Model, Repo, narrative};
+use structdiff_core::{Error, Model, Repo, narrative};
 
 const USAGE: &str = "\
 usage: structdiff export [RANGE]
@@ -19,9 +19,9 @@ Groups come from the repo's .structdiff.json if present, otherwise from the
 grouping recorded by the last export (e.g. by the Neovim plugin), otherwise
 the defaults.";
 
-fn export(spec: &str) -> Result<(), String> {
-    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
-    let repo = Repo::discover(&cwd).map_err(|e| format!("not a git repository: {e}"))?;
+fn export(spec: &str) -> Result<(), Error> {
+    let cwd = std::env::current_dir().map_err(|source| Error::Io { path: ".".into(), source })?;
+    let repo = Repo::discover(&cwd)?;
     let grouping = narrative::exported_grouping(&repo.root).unwrap_or_default();
     let (model, warnings) = Model::load(repo, spec, &grouping)?;
     for w in warnings {

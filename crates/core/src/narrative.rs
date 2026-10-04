@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::error::{Error, Result};
 use crate::git::{Range, Repo};
 use crate::group::{Group, Grouping};
 
@@ -146,7 +147,7 @@ fn str_map(v: Option<&Value>) -> BTreeMap<String, String> {
 impl Narrative {
     /// Keep what has the right shape, drop the rest: a sloppy file degrades
     /// instead of failing.
-    pub fn from_value(data: &Value) -> Result<Self, String> {
+    pub fn from_value(data: &Value) -> Result<Self, &'static str> {
         let obj = data.as_object().ok_or("not a JSON object")?;
         Ok(Self {
             fingerprint: obj.get("fingerprint").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
@@ -162,14 +163,16 @@ impl Narrative {
     }
 
     /// Ok(None) when there is no narrative for this range yet.
-    pub fn load(root: &Path, spec: &str) -> Result<Option<Self>, String> {
+    pub fn load(root: &Path, spec: &str) -> Result<Option<Self>> {
         let path = path(root, spec);
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return Ok(None);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => return Err(Error::Io { path, source }),
         };
-        let value: Value =
-            serde_json::from_str(&text).map_err(|_| format!("invalid JSON in {}", path.display()))?;
-        Self::from_value(&value).map(Some)
+        let invalid = |reason| Error::InvalidNarrative { path: path.clone(), reason };
+        let value: Value = serde_json::from_str(&text).map_err(|_| invalid("invalid JSON"))?;
+        Self::from_value(&value).map(Some).map_err(invalid)
     }
 }
 

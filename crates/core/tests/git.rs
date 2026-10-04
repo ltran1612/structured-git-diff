@@ -1,6 +1,7 @@
 mod common;
 
 use common::*;
+use structdiff_core::Error;
 use structdiff_core::git::{self, ChangedFile, Repo};
 
 #[test]
@@ -137,14 +138,17 @@ fn single_rev_compares_it_to_the_working_tree() {
 fn unknown_revisions_are_reported() {
     let r = branch_repo();
     let repo = Repo::discover(&r.root).unwrap();
-    assert_eq!(repo.resolve_range("nope").unwrap_err(), "unknown revision: nope");
-    assert_eq!(repo.resolve_range("main...nope").unwrap_err(), "unknown revision: nope");
+    assert!(matches!(repo.resolve_range("nope"), Err(Error::UnknownRevision(r)) if r == "nope"));
+    assert!(matches!(repo.resolve_range("main...nope"), Err(Error::UnknownRevision(r)) if r == "nope"));
+    assert_eq!(repo.resolve_range("nope").unwrap_err().to_string(), "unknown revision: nope");
 }
 
 #[test]
 fn not_a_repo_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
-    assert!(Repo::discover(dir.path()).is_err());
+    let err = Repo::discover(dir.path()).unwrap_err();
+    assert!(matches!(err, Error::NotARepo(_)), "{err:?}");
+    assert!(err.to_string().starts_with("not a git repository: "), "{err}");
 }
 
 #[test]
@@ -161,4 +165,18 @@ fn split_completion_keeps_the_range_prefix() {
     assert_eq!(git::split_completion("main..fe"), ("main..", "fe"));
     assert_eq!(git::split_completion("main...fe"), ("main...", "fe"));
     assert_eq!(git::split_completion("main..."), ("main...", ""));
+}
+
+#[test]
+fn unrelated_histories_have_no_merge_base() {
+    let r = repo(&[("a", "a\n")]);
+    git(&r.root, &["checkout", "-q", "--orphan", "island"]);
+    write(&r.root, "b", "b\n");
+    git(&r.root, &["add", "-A"]);
+    git(&r.root, &["commit", "-qm", "island"]);
+    let repo = Repo::discover(&r.root).unwrap();
+    let err = repo.resolve_range("main...island").unwrap_err();
+    assert!(matches!(&err, Error::NoMergeBase { a, b } if a == "main" && b == "island"), "{err:?}");
+    // two-dot ranges don't need a merge base
+    assert!(repo.resolve_range("main..island").is_ok());
 }

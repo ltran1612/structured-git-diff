@@ -1,14 +1,16 @@
 use structdiff_core::narrative::{self, Narrative, State};
-use structdiff_core::{ChangedFile, Group};
+use structdiff_core::{ChangedFile, Error, Group};
 
 #[test]
 fn load_absent_invalid_and_normalized() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    assert_eq!(Narrative::load(root, ""), Ok(None));
+    assert!(matches!(Narrative::load(root, ""), Ok(None)));
     std::fs::create_dir_all(root.join(".structdiff")).unwrap();
     std::fs::write(narrative::path(root, ""), "{not json").unwrap();
-    assert!(Narrative::load(root, "").unwrap_err().starts_with("invalid JSON in"));
+    let err = Narrative::load(root, "").unwrap_err();
+    assert!(matches!(err, Error::InvalidNarrative { reason: "invalid JSON", .. }), "{err:?}");
+    assert!(err.to_string().starts_with("invalid JSON in "), "{err}");
     std::fs::write(
         narrative::path(root, ""),
         r#"{"version":1,"fingerprint":"abc","overall":"story","groups":{"Source":"why","Bad":3},
@@ -22,7 +24,7 @@ fn load_absent_invalid_and_normalized() {
     assert_eq!(n.files["a.lua"], "reason");
     assert_eq!(n.order, ["a.lua"]);
     std::fs::write(narrative::path(root, ""), "[1,2]").unwrap();
-    assert_eq!(Narrative::load(root, "").unwrap_err(), "not a JSON object");
+    assert!(matches!(Narrative::load(root, ""), Err(Error::InvalidNarrative { reason: "not a JSON object", .. })));
 }
 
 #[test]

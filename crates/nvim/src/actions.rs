@@ -87,7 +87,7 @@ pub(crate) fn open_then(spec: String, then: Then) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo = match Repo::discover(&cwd) {
         Ok(r) => r,
-        Err(e) => return ui::notify(&format!("not a git repository: {e}"), ui::ERROR),
+        Err(e) => return ui::notify(&e.to_string(), ui::ERROR),
     };
     let grouping = state::config().grouping();
     state::set_loading(true);
@@ -110,11 +110,11 @@ pub(crate) fn open_then(spec: String, then: Then) {
 
 /// Create the view for a freshly loaded model. False when there is nothing
 /// to show.
-fn finish_open(res: Result<(Model, Vec<String>), String>) -> bool {
+fn finish_open(res: structdiff_core::error::Result<(Model, Vec<String>)>) -> bool {
     let (model, warnings) = match res {
         Ok(m) => m,
         Err(e) => {
-            ui::notify(&e, ui::ERROR);
+            ui::notify(&e.to_string(), ui::ERROR);
             return false;
         }
     };
@@ -166,7 +166,7 @@ pub(crate) fn refresh_then(then: Then) {
                 return;
             }
             match res {
-                Err(e) => return ui::notify(&e, ui::ERROR),
+                Err(e) => return ui::notify(&e.to_string(), ui::ERROR),
                 Ok(w) => notify_all(w),
             }
             if model.file_count() == 0 {
