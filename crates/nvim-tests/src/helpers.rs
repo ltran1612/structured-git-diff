@@ -140,3 +140,16 @@ pub fn refresh_wait() {
     structdiff::refresh();
     assert!(wait_until(5000, || !structdiff::busy()), "refresh timed out");
 }
+
+/// Route `vim.notify` into a list readable with [`notifications`].
+pub fn capture_notifications() {
+    let _: nvim_oxi::Object = api::call_function(
+        "luaeval",
+        ("(function() _G.__structdiff_msgs = {}; vim.notify = function(m) table.insert(_G.__structdiff_msgs, m) end end)()",),
+    )
+    .unwrap();
+}
+
+pub fn notifications() -> Vec<String> {
+    api::call_function("luaeval", ("_G.__structdiff_msgs",)).unwrap()
+}

@@ -3,7 +3,10 @@
 
 use std::cell::{Cell, RefCell};
 
+use std::panic::Location;
+
 use crate::config::Config;
+use crate::ui;
 use crate::view::View;
 
 thread_local! {
@@ -26,21 +29,49 @@ pub fn update_config(f: impl FnOnce(&mut Config)) {
     CONFIG.with(|c| f(c.borrow_mut().get_or_insert_with(Config::default)));
 }
 
-/// Run `f` on the open view. None when there is no view, or when the view is
-/// already borrowed (a re-entrant call).
+/// A call reached the view while it was already in use: something called back
+/// into the plugin from inside an action. The call is dropped (running it
+/// would alias the view), but loudly, with the caller's location.
+fn reentrant(caller: &Location<'_>) {
+    ui::notify(
+        &format!("internal: re-entrant call from {}:{} ignored (the view was busy)", caller.file(), caller.line()),
+        ui::WARN,
+    );
+}
+
+/// Run `f` on the open view. None when there is no view, or (with a warning)
+/// when the view is already in use by an outer call.
+#[track_caller]
 pub fn with_view<R>(f: impl FnOnce(&mut View) -> R) -> Option<R> {
-    VIEW.with(|cell| {
-        let mut guard = cell.try_borrow_mut().ok()?;
-        guard.as_mut().map(f)
+    let caller = Location::caller();
+    VIEW.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut guard) => guard.as_mut().map(f),
+        Err(_) => {
+            reentrant(caller);
+            None
+        }
     })
 }
 
+#[track_caller]
 pub fn put_view(view: View) {
-    VIEW.with(|c| *c.borrow_mut() = Some(view));
+    let caller = Location::caller();
+    VIEW.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut guard) => *guard = Some(view),
+        Err(_) => reentrant(caller),
+    });
 }
 
+#[track_caller]
 pub fn take_view() -> Option<View> {
-    VIEW.with(|c| c.try_borrow_mut().ok().and_then(|mut g| g.take()))
+    let caller = Location::caller();
+    VIEW.with(|cell| match cell.try_borrow_mut() {
+        Ok(mut guard) => guard.take(),
+        Err(_) => {
+            reentrant(caller);
+            None
+        }
+    })
 }
 
 pub fn loading() -> bool {

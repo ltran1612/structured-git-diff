@@ -311,3 +311,17 @@ fn toggling_reasons_updates_the_one_config_the_view_renders_from() {
     assert!(virt_texts().contains(&"turns retry on".into()));
     structdiff::close();
 }
+
+#[nvim_oxi::test]
+fn reentrant_calls_are_dropped_with_a_warning_not_silently() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    capture_notifications();
+    let inner = structdiff::with_view(|_| structdiff::with_view(|_| 42));
+    assert_eq!(inner, Some(None));
+    let msgs = notifications();
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert!(msgs[0].contains("re-entrant call from crates/nvim-tests/src/view.rs:"), "{}", msgs[0]);
+    structdiff::close();
+}
