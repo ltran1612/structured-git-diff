@@ -168,48 +168,64 @@ impl Repo {
     /// staged, unstaged and untracked files.
     pub fn scan(&self, range: &Range) -> Result<Scan> {
         let raw = run_raw(&self.root, &Self::diff_args(range, &["--raw", "-z", "--abbrev=40", "-M", "--no-ext-diff"]), None)?;
-        let entries = parse_raw(&String::from_utf8_lossy(&raw));
-        let mut files: Vec<ChangedFile> = entries.iter().map(|e| e.file.clone()).collect();
+        let mut entries = parse_raw(&String::from_utf8_lossy(&raw));
+        let zero = "0".repeat(40);
 
-        // Paths whose content the fingerprint must cover but git didn't hash:
-        // working-tree files shown with an all-zero blob id, and untracked files.
-        let mut to_hash: Vec<String> = Vec::new();
+        let mut untracked: Vec<String> = Vec::new();
         if range.target.is_none() {
-            to_hash.extend(
-                entries.iter().filter(|e| e.dst_unknown() && e.file.status != 'D').map(|e| e.file.path.clone()),
-            );
-            let untracked = run(&self.root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-            for p in untracked.split('\0').filter(|p| !p.is_empty() && !is_internal(p)) {
-                files.push(ChangedFile::new('?', p));
-                to_hash.push(p.to_owned());
+            let out = run(&self.root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+            untracked = out.split('\0').filter(|p| !p.is_empty() && !is_internal(p)).map(str::to_owned).collect();
+            // After `git rm --cached f`, git reports f as deleted while it is
+            // still in the working tree (as untracked). Against HEAD that's
+            // one modification, not a deletion plus a new file.
+            let untracked_set: std::collections::HashSet<&str> = untracked.iter().map(String::as_str).collect();
+            let mut readded = Vec::new();
+            for e in entries.iter_mut().filter(|e| e.file.status == 'D' && untracked_set.contains(e.file.path.as_str())) {
+                e.file.status = 'M';
+                e.dst_mode = worktree_mode(&self.root, &e.file.path).to_owned();
+                e.dst_sha = zero.clone();
+                readded.push(e.file.path.clone());
             }
+            untracked.retain(|p| !readded.contains(p));
+            // Resolve the working-tree ids git left as zeros. Ids are computed
+            // here rather than by `git hash-object`, which fails the whole
+            // batch on one path it can't hash (a nested repo, a symlink to a
+            // directory, a dangling symlink) and mis-reads names starting
+            // with a quote.
+            for e in entries.iter_mut().filter(|e| e.dst_unknown() && e.file.status != 'D') {
+                e.dst_sha = worktree_id(&self.root, &e.file.path);
+            }
+            // A re-added file with unchanged content isn't a change at all.
+            entries.retain(|e| !(e.file.status == 'M' && e.src_sha == e.dst_sha && e.src_mode == e.dst_mode));
         }
+
+        let mut files: Vec<ChangedFile> = entries.iter().map(|e| e.file.clone()).collect();
+        files.extend(untracked.iter().map(|p| ChangedFile::new('?', p)));
         files.sort_by(|a, b| a.path.cmp(&b.path));
 
-        // Hash a normalized line per change, with every blob id resolved to
-        // the real content. Hashing git's raw output directly would make
-        // `git add` alone change the fingerprint (the right-hand id goes from
-        // all-zeros to the real id).
-        // Ids are computed here rather than by `git hash-object`, which
-        // fails the whole batch on one path it can't hash (a nested repo, a
-        // symlink to a directory, a dangling symlink) and mis-reads names
-        // starting with a quote.
-        let resolved: std::collections::HashMap<String, String> =
-            to_hash.iter().map(|p| (p.clone(), worktree_id(&self.root, p))).collect();
-        let mut lines: Vec<String> = entries
-            .iter()
-            .map(|e| {
-                let dst = if e.dst_unknown() && e.file.status != 'D' {
-                    resolved.get(&e.file.path).cloned().unwrap_or_default()
-                } else {
-                    e.dst_sha.clone()
-                };
-                let old = e.file.old_path.as_deref().unwrap_or("");
-                format!("{} {} {} {} {} {} {}", e.src_mode, e.dst_mode, e.src_sha, dst, e.file.status, old, e.file.path)
-            })
-            .collect();
-        for f in files.iter().filter(|f| f.status == '?') {
-            lines.push(format!("? {} {}", resolved.get(&f.path).map_or("", String::as_str), f.path));
+        // The fingerprint hashes one canonical line per side of each change,
+        // "<old mode> <new mode> <old id> <new id> <path>", with every id
+        // resolved to the real content. Status letters and rename pairing
+        // depend on what's staged (an untracked file vs `git add`, an
+        // unstaged mv vs a staged rename), so they're left out: a rename is
+        // a deletion plus an addition, and an untracked file an addition.
+        // Staging then never changes the fingerprint; content changes do.
+        let line = |src_mode: &str, dst_mode: &str, src: &str, dst: &str, path: &str| {
+            format!("{src_mode} {dst_mode} {src} {dst} {path}")
+        };
+        let mut lines: Vec<String> = Vec::new();
+        for e in &entries {
+            match (e.file.status, &e.file.old_path) {
+                ('R', Some(old)) => {
+                    lines.push(line(&e.src_mode, "000000", &e.src_sha, &zero, old));
+                    lines.push(line("000000", &e.dst_mode, &zero, &e.dst_sha, &e.file.path));
+                }
+                ('C', Some(_)) => lines.push(line("000000", &e.dst_mode, &zero, &e.dst_sha, &e.file.path)),
+                _ => lines.push(line(&e.src_mode, &e.dst_mode, &e.src_sha, &e.dst_sha, &e.file.path)),
+            }
+        }
+        for p in &untracked {
+            lines.push(line("000000", worktree_mode(&self.root, p), &zero, &worktree_id(&self.root, p), p));
         }
         lines.sort();
         let mut hasher = Sha256::new();
@@ -306,6 +322,22 @@ pub fn worktree_id(root: &Path, path: &str) -> String {
         return std::fs::read(&full).map_or_else(|_| "unreadable".into(), |bytes| blob_id(&bytes));
     }
     "special".into()
+}
+
+/// The git file mode a working-tree path would be staged with.
+fn worktree_mode(root: &Path, path: &str) -> &'static str {
+    let Ok(meta) = std::fs::symlink_metadata(root.join(path.trim_end_matches('/'))) else { return "000000" };
+    if meta.file_type().is_symlink() {
+        return "120000";
+    }
+    if meta.is_dir() {
+        return "160000";
+    }
+    #[cfg(unix)]
+    if std::os::unix::fs::PermissionsExt::mode(&meta.permissions()) & 0o111 != 0 {
+        return "100755";
+    }
+    "100644"
 }
 
 /// The result of [`Repo::scan`].

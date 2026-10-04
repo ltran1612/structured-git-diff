@@ -224,3 +224,32 @@ fn our_content_ids_match_gits() {
         assert_eq!(structdiff_core::git::worktree_id(&r.root, path), theirs, "{path}");
     }
 }
+
+#[test]
+fn staging_never_changes_the_fingerprint() {
+    let r = repo(&[("a.lua", "a\n"), ("old.lua", "x\ny\nz\n")]);
+    let repo = Repo::discover(&r.root).unwrap();
+    let range = repo.resolve_range("").unwrap();
+    let fp = || repo.scan(&range).unwrap().fingerprint;
+    write(&r.root, "a.lua", "a2\n");
+    write(&r.root, "new.lua", "n\n");
+    std::fs::rename(r.root.join("old.lua"), r.root.join("moved.lua")).unwrap();
+    let before = fp();
+    git(&r.root, &["add", "-N", "new.lua"]); // intent to add
+    assert_eq!(fp(), before, "git add -N changed it");
+    git(&r.root, &["add", "-A"]); // stages the edit, the new file and the rename (as R)
+    assert_eq!(fp(), before, "git add -A changed it");
+    git(&r.root, &["reset", "-q"]);
+    assert_eq!(fp(), before, "git reset changed it");
+}
+
+#[test]
+fn rm_cached_lists_a_file_once() {
+    let r = repo(&[("a.lua", "a\n"), ("b.lua", "b\n")]);
+    let repo = Repo::discover(&r.root).unwrap();
+    let range = repo.resolve_range("").unwrap();
+    git(&r.root, &["rm", "-q", "--cached", "a.lua"]); // untracked now, content unchanged
+    write(&r.root, "b.lua", "b2\n");
+    git(&r.root, &["rm", "-q", "--cached", "b.lua"]); // untracked now, content changed
+    assert_eq!(summary(&repo.scan(&range).unwrap().files), ["M b.lua"]);
+}
