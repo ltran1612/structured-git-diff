@@ -285,13 +285,13 @@ impl View {
 
         ui::win_cmd(&self.left, "diffthis")?;
         ui::win_cmd(&self.right, "diffthis")?;
-        self.right.call::<_, _, ()>(|_| {
+        ui::in_win(&self.right, || {
             api::command("normal! gg")?;
             let hl: i64 = api::call_function("diff_hlID", (1, 1))?;
             if hl == 0 {
                 api::command("silent! normal! ]c")?;
             }
-            Ok::<_, api::Error>(())
+            Ok(())
         })?;
         Ok((right, real))
     }
@@ -504,9 +504,9 @@ impl View {
         }
         self.render_narrative();
         let cmd = format!("botright {}split", cfg.narrative_height);
-        let mut win = self.right.call::<_, _, Window>(move |_| {
+        let mut win = ui::in_win(&self.right, move || {
             api::command(&cmd)?;
-            Ok::<_, api::Error>(Window::current())
+            Ok(Window::current())
         })?;
         win.set_buf(self.narrative_buf.as_ref().expect("created above"))?;
         ui::win_opt(&win, "wrap", true);

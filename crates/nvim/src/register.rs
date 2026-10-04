@@ -92,11 +92,23 @@ fn range_command(name: &str, desc: &str, f: fn(Option<String>)) -> Result<(), ap
     )
 }
 
-fn lua_fn<A: nvim_oxi::conversion::FromObject + nvim_oxi::lua::Poppable + 'static>(f: fn(A)) -> Object {
-    Object::from(Function::<A, ()>::from_fn(move |a: A| {
-        f(a);
+/// A Lua-callable wrapper around `f`. It takes its argument as a raw
+/// `Object` and converts it here, so a missing or mistyped argument becomes
+/// an error message. Letting nvim-oxi pop a typed argument instead would
+/// raise a Lua error from Rust, which aborts Neovim.
+fn lua_fn<A: nvim_oxi::conversion::FromObject + 'static>(name: &'static str, f: fn(A)) -> Object {
+    Object::from(Function::<Object, ()>::from_fn(move |arg: Object| {
+        match A::from_object(arg) {
+            Ok(a) => f(a),
+            Err(e) => ui::notify(&format!("{name}: bad argument: {e}"), ui::ERROR),
+        }
         Ok::<_, Infallible>(())
     }))
+}
+
+/// Navigation step from Lua: a missing argument means 1.
+fn step(delta: Option<i64>) -> i64 {
+    delta.unwrap_or(1)
 }
 
 /// Register commands and highlights; return the module table.
@@ -116,17 +128,17 @@ pub fn init() -> nvim_oxi::Result<Dictionary> {
     hl::apply();
 
     Ok(Dictionary::from_iter([
-        ("setup", lua_fn(setup)),
-        ("open", lua_fn(actions::open)),
-        ("generate", lua_fn(generate::generate)),
-        ("cancel_generate", lua_fn(|(): ()| generate::cancel_generate())),
-        ("close", lua_fn(|(): ()| actions::close())),
-        ("refresh", lua_fn(|(): ()| actions::refresh())),
-        ("reload_narrative", lua_fn(|(): ()| actions::reload_narrative())),
-        ("toggle_narrative", lua_fn(|(): ()| actions::toggle_narrative())),
-        ("toggle_reasons", lua_fn(|(): ()| actions::toggle_reasons())),
-        ("goto_file", lua_fn(actions::goto_file)),
-        ("goto_group", lua_fn(actions::goto_group)),
+        ("setup", lua_fn("setup", setup)),
+        ("open", lua_fn("open", actions::open)),
+        ("generate", lua_fn("generate", generate::generate)),
+        ("cancel_generate", lua_fn("cancel_generate", |_: Object| generate::cancel_generate())),
+        ("close", lua_fn("close", |_: Object| actions::close())),
+        ("refresh", lua_fn("refresh", |_: Object| actions::refresh())),
+        ("reload_narrative", lua_fn("reload_narrative", |_: Object| actions::reload_narrative())),
+        ("toggle_narrative", lua_fn("toggle_narrative", |_: Object| actions::toggle_narrative())),
+        ("toggle_reasons", lua_fn("toggle_reasons", |_: Object| actions::toggle_reasons())),
+        ("goto_file", lua_fn("goto_file", |d: Option<i64>| actions::goto_file(step(d)))),
+        ("goto_group", lua_fn("goto_group", |d: Option<i64>| actions::goto_group(step(d)))),
         // True while git work is running in the background (for scripts).
         ("busy", Object::from(Function::<(), bool>::from_fn(|(): ()| Ok::<_, Infallible>(state::busy())))),
     ]))

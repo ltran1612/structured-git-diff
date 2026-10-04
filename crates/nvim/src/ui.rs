@@ -106,8 +106,31 @@ pub fn same_tab(win: &Window, tab: &api::TabPage) -> bool {
     win.is_valid() && win.get_tabpage().is_ok_and(|t| &t == tab)
 }
 
+/// Run `f` with `win` as the current window, without moving the user's
+/// cursor there.
+///
+/// Errors inside `f` come back as `Err`, never through nvim-oxi:
+/// `Window::call` turns an `Err` returned by its closure into a Lua error
+/// raised from an `extern "C"` trampoline, which can't unwind and aborts
+/// Neovim. That's why clippy.toml bans `Window::call` everywhere else.
+#[allow(clippy::disallowed_methods)]
+pub fn in_win<T: 'static>(win: &Window, f: impl FnOnce() -> Result<T, api::Error> + 'static) -> Result<T, api::Error> {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let slot: Rc<RefCell<Option<Result<T, api::Error>>>> = Rc::new(RefCell::new(None));
+    let inner = slot.clone();
+    win.call::<_, _, ()>(move |_| {
+        *inner.borrow_mut() = Some(f());
+        Ok::<_, std::convert::Infallible>(())
+    })?;
+    // The closure always runs when nvim_win_call succeeds. If it somehow
+    // didn't, report that rather than panicking (a panic here would abort
+    // Neovim too).
+    slot.borrow_mut().take().unwrap_or_else(|| Err(api::Error::Other("window call did not run".into())))
+}
+
 /// Run an Ex command inside `win` without moving the cursor there.
 pub fn win_cmd(win: &Window, cmd: &str) -> Result<(), api::Error> {
     let cmd = cmd.to_owned();
-    win.call::<_, _, ()>(move |_| api::command(&cmd))
+    in_win(win, move || api::command(&cmd))
 }

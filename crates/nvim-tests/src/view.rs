@@ -491,3 +491,47 @@ fn generator_is_chosen_from_setup() {
     assert_eq!(structdiff::config().generate_cmd_for("main..")[0], "my-agent");
     assert!(notifications().iter().any(|m| m.contains("invalid setup options")), "{:?}", notifications());
 }
+
+#[nvim_oxi::test]
+fn an_ex_error_while_showing_a_file_is_reported_not_fatal() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None); // on lua/backoff.lua, a real working-tree buffer
+    // Unsaved edit in the real file: re-running `:edit` on it raises E37.
+    let mut buf = structdiff::with_view(|v| v.right().get_buf().unwrap()).unwrap();
+    buf.set_lines(0..0, false, ["-- unsaved"]).unwrap();
+    capture_notifications();
+    refresh_wait();
+    assert!(notifications().iter().any(|m| m.contains("E37")), "{:?}", notifications());
+    // Neovim is still alive, the view is intact and the edit is kept.
+    assert_eq!(current().as_deref(), Some("lua/backoff.lua"));
+    assert_eq!(lines(&buf)[0], "-- unsaved");
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn a_failing_user_autocmd_does_not_take_neovim_down() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    api::command("autocmd BufReadPost core.lua lua error('user autocmd failed')").unwrap();
+    capture_notifications();
+    structdiff::goto_file(1); // loads lua/core.lua with :edit
+    assert_eq!(current().as_deref(), Some("lua/core.lua"));
+    assert!(notifications().iter().any(|m| m.contains("user autocmd failed")), "{:?}", notifications());
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn lua_functions_tolerate_missing_arguments() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    // goto_file() with no delta used to abort Neovim; it now means +1.
+    let _: nvim_oxi::Object = api::call_function("luaeval", ("require('structdiff') ~= nil",)).unwrap_or(nvim_oxi::Object::nil());
+    let module = structdiff::init().unwrap();
+    let goto: nvim_oxi::Function<(), ()> = nvim_oxi::conversion::FromObject::from_object(module.get("goto_file").unwrap().clone()).unwrap();
+    goto.call(()).unwrap();
+    assert_eq!(current().as_deref(), Some("lua/core.lua"));
+    structdiff::close();
+}

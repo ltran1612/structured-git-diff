@@ -233,17 +233,18 @@ This runs strict clippy (`-D warnings`, which includes the ban on broken nvim-ox
 
 ## Compatibility
 
-nvim-oxi is pinned to an upstream commit with the `neovim-0-12` feature, which predates some 0.12.x changes. Checked against the v0.12.5 sources, three bindings don't match and the plugin avoids them:
+nvim-oxi is pinned to an upstream commit with the `neovim-0-12` feature, which predates some 0.12.x changes. Checked against the v0.12.5 sources, three bindings don't match, and one more is unsafe to use directly. The plugin avoids all four:
 
 | nvim-oxi binding | Problem on 0.12.5 | Replacement |
 |---|---|---|
 | `api::create_autocmd` | `Dict(create_autocmd)` gained a `buf` key, so the options struct is misaligned | no autocmds; the 300ms watcher timer also notices when the tab is closed |
 | `api::set_hl` | `Dict(highlight)` was reordered and extended | `:highlight default link`, re-applied on every redraw (survives colorscheme changes) |
 | `api::list_tabpages` | `nvim_list_tabpages` now takes an `Arena*`; calling it corrupts the heap | `tabpagenr('$')` |
+| `api::Window::call` | not an ABI issue: an `Err` returned by its closure is raised as a Lua error through an `extern "C"` frame, which aborts Neovim | `ui::in_win`, which catches the error inside and returns it normally |
 
 Two guards keep this from happening again:
 
 - **Exact version allowlist.** `TESTED_NEOVIM` in `crates/nvim/src/register.rs` lists the exact versions checked (currently 0.12.5). These bindings broke within the 0.12 series, so a newer 0.12.x is rejected too. On any other version the plugin shows an error and does nothing. If you accept the risk, set `vim.g.structdiff_allow_untested_nvim = true` before it loads.
-- **Compile-time ban.** `clippy.toml` lists the three bindings as `disallowed-methods`, and the plugin crate denies that lint, so `./check.sh` fails if anyone calls them.
+- **Compile-time ban.** `clippy.toml` lists the four bindings as `disallowed-methods`, and the plugin crate denies that lint, so `./check.sh` fails if anyone calls them.
 
 The details are in the doc comment at the top of `crates/nvim/src/lib.rs`. Before supporting a new Neovim or nvim-oxi version, re-check every binding the plugin uses against that version's sources, then add it to `TESTED_NEOVIM`.

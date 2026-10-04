@@ -5,4 +5,5 @@ disallowed-methods = [
     { path = "nvim_oxi::api::create_autocmd", reason = "CreateAutocmdOpts is misaligned on Neovim 0.12.5 (it lacks `buf`); poll in the watcher timer instead" },
     { path = "nvim_oxi::api::set_hl", reason = "SetHighlightOpts doesn't match Neovim 0.12.5's Dict(highlight); use `:highlight` via api::command" },
     { path = "nvim_oxi::api::list_tabpages", reason = "omits the Arena* that nvim_list_tabpages takes on 0.12.5 and corrupts the heap; use ui::tab_count()" },
+    { path = "nvim_oxi::api::Window::call", reason = "an Err from the closure becomes a Lua error raised through an extern \"C\" frame, which aborts Neovim; use ui::in_win()" },
 ]
