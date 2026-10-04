@@ -9,11 +9,17 @@ use structdiff_core::{Error, Model, Repo, narrative};
 
 const USAGE: &str = "\
 usage: structdiff export [RANGE]
+       structdiff prompt [RANGE]
 
-Write .structdiff/groups.json for RANGE in the git repo containing the
-current directory, and print its path. RANGE is empty (HEAD vs working
-tree), a revision (REV vs working tree), A..B, or A...B (what B adds on top
-of A).
+export: write .structdiff/groups.json for RANGE in the git repo containing
+the current directory, and print its path.
+
+prompt: print the instructions for writing RANGE's narrative (the
+diff-narrative skill's text), for agents that don't have the skill, such
+as Codex or Copilot.
+
+RANGE is empty (HEAD vs working tree), a revision (REV vs working tree),
+A..B, or A...B (what B adds on top of A).
 
 Groups come from the repo's .structdiff.json if present, otherwise from the
 grouping recorded by the last export (e.g. by the Neovim plugin), otherwise
@@ -37,6 +43,14 @@ fn main() -> ExitCode {
     let result = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["export"] => export(""),
         ["export", spec] => export(spec),
+        ["prompt"] => {
+            print!("{}", structdiff_core::generator::prompt(""));
+            return ExitCode::SUCCESS;
+        }
+        ["prompt", spec] => {
+            print!("{}", structdiff_core::generator::prompt(spec));
+            return ExitCode::SUCCESS;
+        }
         ["-h" | "--help" | "help"] => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;

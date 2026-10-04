@@ -55,3 +55,14 @@ fn errors_and_usage() {
     assert_eq!(structdiff(dir.path(), &["bogus"]).status.code(), Some(2));
     assert!(structdiff(dir.path(), &["--help"]).status.success());
 }
+
+#[test]
+fn prompt_prints_the_instructions_for_a_range() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = structdiff(dir.path(), &["prompt", "main..."]);
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(text, structdiff_core::generator::prompt("main..."));
+    assert!(text.contains("Did you make these changes?"));
+    assert!(text.contains("Range argument: `main...`"));
+}

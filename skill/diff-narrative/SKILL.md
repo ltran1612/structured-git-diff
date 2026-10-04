@@ -1,6 +1,6 @@
 ---
 name: diff-narrative
-description: Explain why a git change set was made (uncommitted work, or a branch range like main...HEAD), as a narrative tying the changed files together. Writes .structdiff/narrative*.json for the structdiff.nvim viewer. Use when the user runs /diff-narrative [range] or asks for a narrative or explanation of their diff or branch.
+description: Explain why a git change set was made (uncommitted work, or a branch range like main...HEAD), as a narrative tying the changed files together. Writes .structdiff/narrative*.json for the structdiff.nvim viewer. Use when the user runs /diff-narrative [range], asks for a narrative or explanation of their diff or branch, or as the last step after you finish making changes in a repo.
 ---
 
 # diff-narrative
@@ -9,9 +9,24 @@ Write a narrative of a change set. The narrative explains **why** each file chan
 
 Range argument: `$ARGUMENTS`
 
+If the line above shows a placeholder instead of a range, your agent doesn't fill in skill arguments: take the range from the request (for example `/diff-narrative main...` means `main...`), or use the working tree if none was given.
+
+## 0. Did you make these changes?
+
+If you made some or all of these changes in this conversation, you are the best source of *why*. Nobody reading the diff later can recover it. For those changes, write from what you know:
+- what the user asked for, in their terms;
+- the constraints and decisions behind each change, and the alternatives you rejected;
+- what you deliberately left out, and anything you know is unfinished.
+
+Use the diff and the steps below to check that you cover every file and describe what the code really does, not to guess intent you already know. Changes you didn't make (earlier commits in the range, the user's own edits, another agent's work) still have to be inferred from the code: say so, and don't present an inference as known intent.
+
+If you have no history of these changes (you were started just to write this narrative), reconstruct the story from the code as described below.
+
+**Run this last:** after your final edit, and after committing if you commit. The narrative is tied to the exact diff, so any later change marks it stale in the viewer.
+
 ## 1. Work out the range and output file
 
-Run everything from the repo root (`git rev-parse --show-toplevel`). The range argument (the text after `/diff-narrative`, possibly empty) picks what to explain:
+Run everything from the repo root (`git rev-parse --show-toplevel`). The range argument (possibly empty) picks what to explain:
 
 | Argument | Compares | Diff command |
 |---|---|---|
@@ -48,7 +63,7 @@ Don't just summarise each file. Find the **intent** and the **dependencies betwe
 - Which changes are unrelated to the main story? For example, drive-by refactors, formatting, version bumps. Say so plainly.
 - Note anything that looks unfinished or risky: a TODO left behind, a debug print, a test that no longer covers a changed path.
 
-Only claim what the code shows. If the reason for a change can't be inferred, say what it does and mark the reason as unclear. Do not invent one.
+Only claim what the code shows, or what you know first-hand from making the change. If the reason for a change can't be inferred, say what it does and mark the reason as unclear. Do not invent one.
 
 ## 4. Write the narrative file
 
