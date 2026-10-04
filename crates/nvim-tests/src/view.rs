@@ -709,3 +709,40 @@ fn the_sidebar_keeps_its_panel() {
     let _ = cursor_before;
     structdiff::close();
 }
+
+#[nvim_oxi::test]
+fn cancel_kills_children_that_ignore_sigterm() {
+    let r = sample_repo();
+    start(&r.root);
+    // the backgrounded child ignores SIGTERM
+    generate_with("(trap '' TERM; sleep 30) & echo $! > .structdiff/sleep.pid; wait", 0);
+    open_wait(None);
+    structdiff::generate(None);
+    let pid_file = r.root.join(".structdiff/sleep.pid");
+    assert!(wait_until(5000, || std::fs::read_to_string(&pid_file).is_ok_and(|p| !p.trim().is_empty())));
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    structdiff::cancel_generate();
+    assert!(wait_until(8000, || !generating()), "generation did not stop");
+    assert!(wait_until(3000, || !process_alive(&pid)), "a TERM-ignoring child survived cancel");
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn a_leftover_background_process_does_not_hang_generation() {
+    let r = sample_repo();
+    start(&r.root);
+    // answers right away but leaves a process holding stdout open
+    let reply = r#"{"overall":"done","files":{},"order":[]}"#;
+    let script = format!("sleep 30 & echo $! > .structdiff/sleep.pid; printf '%s' '{reply}'");
+    generate_with(&script, 0);
+    open_wait(None);
+    capture_notifications();
+    let started = std::time::Instant::now();
+    structdiff::generate(None);
+    assert!(wait_until(10000, || !generating()), "generation hung on the leftover process");
+    assert!(started.elapsed() < std::time::Duration::from_secs(8), "{:?}", started.elapsed());
+    assert!(notifications().iter().any(|m| m.contains("narrative ready")), "{:?}", notifications());
+    let pid = std::fs::read_to_string(r.root.join(".structdiff/sleep.pid")).unwrap();
+    assert!(wait_until(3000, || !process_alive(&pid)), "the leftover process was left running");
+    structdiff::close();
+}

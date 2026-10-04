@@ -129,34 +129,95 @@ fn spawn_child(cmd: &[String], root: &Path) -> std::io::Result<Child> {
     command.spawn()
 }
 
-/// SIGTERM the child's process group, give it two seconds, then SIGKILL.
-fn stop(child: &mut Child) {
-    #[cfg(unix)]
-    // SAFETY: plain syscall; a negative pid addresses the process group that
-    // spawn_child created for this child.
-    unsafe {
-        libc::kill(-(child.id() as libc::pid_t), libc::SIGTERM);
-    }
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
-            return;
+/// Send `sig` to the whole process group `spawn_child` created.
+#[cfg(unix)]
+fn signal_group(pgid: u32, sig: libc::c_int) -> bool {
+    // SAFETY: plain syscall; a negative pid addresses the process group.
+    unsafe { libc::kill(-(pgid as libc::pid_t), sig) == 0 }
+}
+
+/// Wait until `done()` or `limit` passes; true if done.
+fn wait_for(limit: Duration, mut done: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + limit;
+    loop {
+        if done() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    let _ = child.kill();
+}
+
+/// Stop every process in the command's group: SIGTERM, then SIGKILL for
+/// anything still alive two seconds later (including members that ignore
+/// SIGTERM). Reaps the leader.
+fn stop(child: &mut Child) {
+    let pgid = child.id();
+    #[cfg(unix)]
+    {
+        signal_group(pgid, libc::SIGTERM);
+        let all_gone = wait_for(Duration::from_secs(2), || {
+            let _ = child.try_wait();
+            !signal_group(pgid, 0)
+        });
+        if !all_gone {
+            signal_group(pgid, libc::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (pgid, child.kill());
     let _ = child.wait();
 }
 
-/// Drain a pipe on its own thread so a chatty command can't fill it and block.
-fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut buf);
+/// After the command exits, stop anything it left running in its group
+/// (say, `sleep 30 &`). Such a process also holds the output pipes open.
+fn stop_leftovers(pgid: u32) {
+    #[cfg(unix)]
+    if signal_group(pgid, 0) {
+        signal_group(pgid, libc::SIGTERM);
+        if !wait_for(Duration::from_secs(1), || !signal_group(pgid, 0)) {
+            signal_group(pgid, libc::SIGKILL);
         }
-        buf
-    })
+    }
+    #[cfg(not(unix))]
+    let _ = pgid;
+}
+
+/// Read a pipe on its own thread into a shared buffer, so a chatty command
+/// can't fill the pipe and block, and the reader can be abandoned (keeping
+/// what it read) if something outside the group still holds the pipe open.
+struct Drain {
+    data: Arc<std::sync::Mutex<Vec<u8>>>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+fn drain(pipe: Option<impl Read + Send + 'static>) -> Drain {
+    let data = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (tx, done) = std::sync::mpsc::channel();
+    let sink = data.clone();
+    std::thread::spawn(move || {
+        if let Some(mut pipe) = pipe {
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = pipe.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                sink.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(&chunk[..n]);
+            }
+        }
+        let _ = tx.send(());
+    });
+    Drain { data, done }
+}
+
+impl Drain {
+    /// Everything read, waiting at most `grace` for the pipe to close.
+    fn finish(self, grace: Duration) -> Vec<u8> {
+        let _ = self.done.recv_timeout(grace);
+        std::mem::take(&mut *self.data.lock().unwrap_or_else(|e| e.into_inner()))
+    }
 }
 
 fn modified(path: &Path) -> Option<std::time::SystemTime> {
@@ -166,6 +227,7 @@ fn modified(path: &Path) -> Option<std::time::SystemTime> {
 /// Run the command; its stdout on success.
 fn run(cmd: &[String], root: &Path, cancel: &AtomicBool, timeout: Option<Duration>) -> Result<String, String> {
     let mut child = spawn_child(cmd, root).map_err(|e| format!("cannot run {}: {e}", cmd[0]))?;
+    let pgid = child.id();
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
     let started = Instant::now();
@@ -185,7 +247,9 @@ fn run(cmd: &[String], root: &Path, cancel: &AtomicBool, timeout: Option<Duratio
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    let (out, err) = (stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default());
+    stop_leftovers(pgid);
+    let grace = Duration::from_secs(2);
+    let (out, err) = (stdout.finish(grace), stderr.finish(grace));
     if status.success() {
         return Ok(String::from_utf8_lossy(&out).into_owned());
     }
