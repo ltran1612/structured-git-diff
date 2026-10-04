@@ -55,11 +55,25 @@ lazy.nvim:
 
 `main` is needed because lazy.nvim only auto-detects Lua modules. `name` keeps the plugin's name (and its directory) as `structdiff.nvim` instead of the repo name. `:Lazy update` rebuilds automatically; to rebuild by hand, run `:Lazy build structdiff.nvim`, then restart Neovim.
 
-Install the skill so Claude Code can find it. With the spec above, lazy.nvim cloned the repo into `~/.local/share/nvim/lazy/structdiff.nvim`:
+### The narrative skill
+
+`skill/diff-narrative/SKILL.md` is a plain agent skill. Claude Code, Codex and GitHub Copilot CLI all load that format, so the same file works in each. `install-skill.sh` copies it into each agent's skills folder:
 
 ```sh
-ln -s ~/.local/share/nvim/lazy/structdiff.nvim/skill/diff-narrative ~/.claude/skills/diff-narrative
+./install-skill.sh                 # every agent CLI found on PATH
+./install-skill.sh claude codex    # or just these
+./install-skill.sh --dry-run       # preview
 ```
+
+| Agent | Installed to |
+|---|---|
+| Claude Code | `~/.claude/skills/diff-narrative` (or `$CLAUDE_CONFIG_DIR/skills`) |
+| Codex | `~/.agents/skills/diff-narrative` |
+| Copilot CLI | `~/.copilot/skills/diff-narrative` (or `$COPILOT_HOME/skills`) |
+
+It copies rather than links, so you can run it from any checkout (with lazy.nvim, that's `~/.local/share/nvim/lazy/structdiff.nvim`) and then delete or move the checkout. Re-run it to update. A previous install of this skill is replaced; anything else at that path is moved to a `.bak` folder first. Restart running agent sessions afterwards.
+
+The skill works without the plugin. With the `structdiff` command on `PATH` (`./build.sh` installs it), its narratives match what the viewer computes and show as up to date. Without it they show as unverified.
 
 ## Usage
 
