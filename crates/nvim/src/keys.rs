@@ -22,24 +22,25 @@ fn nav(cfg: &Config) -> [(&Keys, &'static str, fn()); 4] {
     ]
 }
 
-/// ]g [g ]f [f only: for the real file on the right.
-pub fn map_nav(buf: &mut Buffer, cfg: &Config) {
+fn bind_nav(buf: &mut Buffer, cfg: &Config) {
     for (keys, desc, f) in nav(cfg) {
         bind(buf, keys, desc, f);
     }
 }
 
-pub fn unmap_nav(buf: &mut Buffer, cfg: &Config) {
-    for (keys, _, _) in nav(cfg) {
-        for lhs in keys.list() {
-            ui::unmap(buf, lhs);
-        }
-    }
+/// ]g [g ]f [f only, for the real file on the right. The buffer's own maps
+/// on those keys are saved first; give the result to `ui::restore_maps`
+/// when the file leaves the view.
+pub fn map_nav(buf: &mut Buffer, cfg: &Config) -> ui::SavedMaps {
+    let keys: Vec<&str> = nav(cfg).iter().flat_map(|(k, _, _)| k.list()).collect();
+    let saved = ui::save_maps(buf, &keys);
+    bind_nav(buf, cfg);
+    saved
 }
 
 /// Navigation plus the view keys, for buffers the view owns.
 pub fn map_view(buf: &mut Buffer, cfg: &Config) {
-    map_nav(buf, cfg);
+    bind_nav(buf, cfg);
     let k = &cfg.keymaps;
     bind(buf, &k.toggle_narrative, "toggle narrative", crate::actions::toggle_narrative);
     bind(buf, &k.toggle_reasons, "toggle reasons", crate::actions::toggle_reasons);

@@ -104,6 +104,39 @@ pub fn map(buf: &mut Buffer, lhs: &str, desc: &str, f: impl Fn() + 'static) {
     let _ = buf.set_keymap(Mode::Normal, lhs, "", &opts);
 }
 
+/// A buffer's own Normal-mode maps on some keys, saved before structdiff
+/// put its maps there, and the keys it used.
+#[derive(Default)]
+pub struct SavedMaps {
+    keys: Vec<String>,
+    saved: Vec<api::types::KeymapInfos>,
+}
+
+/// Save `buf`'s buffer-local Normal-mode maps on `keys`.
+pub fn save_maps(buf: &Buffer, keys: &[&str]) -> SavedMaps {
+    let saved = buf
+        .get_keymap(Mode::Normal)
+        .map(|maps| maps.filter(|m| keys.contains(&m.lhs.as_str())).collect())
+        .unwrap_or_default();
+    SavedMaps { keys: keys.iter().map(|k| (*k).to_owned()).collect(), saved }
+}
+
+/// Remove structdiff's maps on the saved keys and put the buffer's own back
+/// (their descriptions aren't recoverable from Neovim's API).
+pub fn restore_maps(buf: &mut Buffer, maps: SavedMaps) {
+    for lhs in &maps.keys {
+        unmap(buf, lhs);
+    }
+    for m in maps.saved {
+        let mut opts = api::opts::SetKeymapOpts::builder();
+        opts.noremap(m.noremap).silent(m.silent).expr(m.expr).nowait(m.nowait);
+        if let Some(cb) = m.callback {
+            opts.callback(cb);
+        }
+        let _ = buf.set_keymap(Mode::Normal, &m.lhs, m.rhs.as_deref().unwrap_or(""), &opts.build());
+    }
+}
+
 pub fn unmap(buf: &mut Buffer, lhs: &str) {
     let _ = buf.del_keymap(Mode::Normal, lhs);
 }

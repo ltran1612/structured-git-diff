@@ -33,15 +33,16 @@ pub(crate) fn notify_all(warnings: Vec<String>) {
 /// file loses its navigation keys, so q / R / gn keep their usual meaning
 /// when you edit it outside the view.
 fn show(v: &mut View, idx: usize, cfg: &Config) -> Result<(), api::Error> {
-    if let Some(mut old) = v.take_real_buf()
+    if let Some((mut old, maps)) = v.take_real_buf()
         && old.is_valid()
     {
-        keys::unmap_nav(&mut old, cfg);
+        ui::restore_maps(&mut old, maps);
     }
     let Some(shown) = v.show(idx, cfg)? else { return Ok(()) };
     let mut right = shown.right;
     if shown.right_is_real {
-        keys::map_nav(&mut right, cfg);
+        let saved = keys::map_nav(&mut right, cfg);
+        v.set_real_maps(saved);
     } else {
         keys::map_view(&mut right, cfg);
     }
@@ -216,10 +217,10 @@ pub fn close() {
 
 /// Free a view whose tab is already gone (or being closed).
 pub(crate) fn discard(mut v: View) {
-    if let Some(mut real) = v.take_real_buf()
+    if let Some((mut real, maps)) = v.take_real_buf()
         && real.is_valid()
     {
-        keys::unmap_nav(&mut real, &state::config());
+        ui::restore_maps(&mut real, maps);
     }
     v.cleanup();
 }

@@ -62,6 +62,8 @@ pub struct View {
     /// The working-tree file shown on the right, which carries navigation
     /// keys only while it is shown.
     real_buf: Option<Buffer>,
+    /// The real buffer's own maps that structdiff's navigation keys replaced.
+    real_maps: ui::SavedMaps,
     generating: bool,
     watcher: Option<TimerHandle>,
     /// Bumped per background rescan; only the latest result is applied.
@@ -121,6 +123,7 @@ impl View {
             narrative_buf: None,
             line_items: Vec::new(),
             real_buf: None,
+            real_maps: ui::SavedMaps::default(),
             generating: false,
             watcher: None,
             scan_gen: 0,
@@ -184,8 +187,14 @@ impl View {
     }
 
     /// Hand over the real file buffer so its keys can be removed.
-    pub fn take_real_buf(&mut self) -> Option<Buffer> {
-        self.real_buf.take()
+    pub fn take_real_buf(&mut self) -> Option<(Buffer, ui::SavedMaps)> {
+        let buf = self.real_buf.take()?;
+        Some((buf, std::mem::take(&mut self.real_maps)))
+    }
+
+    /// Remember the maps structdiff replaced on the real buffer.
+    pub fn set_real_maps(&mut self, maps: ui::SavedMaps) {
+        self.real_maps = maps;
     }
 
     pub fn generating(&self) -> bool {

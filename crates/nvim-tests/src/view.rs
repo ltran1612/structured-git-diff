@@ -660,3 +660,30 @@ fn crlf_latin1_and_filtered_files_only_show_real_changes() {
     }
     structdiff::close();
 }
+
+#[nvim_oxi::test]
+fn the_users_own_buffer_maps_survive_the_view() {
+    let r = sample_repo();
+    start(&r.root);
+    // The user's buffer-local maps on a file the view will show: one plain,
+    // one Lua callback (like a FileType autocmd would set).
+    api::command("edit lua/core.lua").unwrap();
+    api::command("nnoremap <buffer> ]f :let g:mine = 'plain'<CR>").unwrap();
+    let _: nvim_oxi::Object = api::call_function(
+        "luaeval",
+        ("vim.keymap.set('n', '[f', function() vim.g.mine = 'callback' end, { buffer = true })",),
+    )
+    .unwrap();
+    let core = api::get_current_buf();
+    open_wait(None); // on backoff.lua
+    structdiff::goto_file(1); // core.lua: our keys replace the user's
+    assert_eq!(current().as_deref(), Some("lua/core.lua"));
+    structdiff::goto_file(1); // leave it: the user's keys come back
+    let maps: Vec<_> = core.get_keymap(api::types::Mode::Normal).unwrap().collect();
+    let plain = maps.iter().find(|m| m.lhs == "]f").expect("]f restored");
+    assert_eq!(plain.rhs.as_deref(), Some(":let g:mine = 'plain'<CR>"));
+    let cb = maps.iter().find(|m| m.lhs == "[f").expect("[f restored");
+    assert!(cb.callback.is_some());
+    assert!(!maps.iter().any(|m| m.lhs == "]g"), "our ]g left behind");
+    structdiff::close();
+}
