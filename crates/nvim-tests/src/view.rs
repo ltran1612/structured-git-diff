@@ -580,3 +580,46 @@ fn lua_functions_tolerate_missing_arguments() {
     assert_eq!(current().as_deref(), Some("lua/core.lua"));
     structdiff::close();
 }
+
+#[nvim_oxi::test]
+fn only_one_generation_runs_and_cancel_always_reaches_it() {
+    let r = branch_repo();
+    start(&r.root);
+    generate_with(SLOW, 0);
+    open_wait(None);
+    capture_notifications();
+    structdiff::generate(None); // first agent, for the working tree
+    // replace the view and try to start a second generation
+    open_wait(Some("main...HEAD"));
+    structdiff::generate(None);
+    assert!(
+        notifications().iter().any(|m| m.contains("already generating a narrative for the working tree")),
+        "{:?}",
+        notifications()
+    );
+    // the new view isn't marked as generating by the old job
+    assert_eq!(structdiff::with_view(|v| v.generating()), Some(false));
+    structdiff::cancel_generate();
+    assert!(wait_until(5000, || notifications().iter().any(|m| m.contains("narrative generation cancelled"))));
+    // the old job's end leaves the new view alone
+    assert_eq!(structdiff::with_view(|v| v.model().spec.clone()).as_deref(), Some("main...HEAD"));
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn a_rescan_from_a_replaced_view_does_not_touch_the_new_one() {
+    let r = branch_repo();
+    start(&r.root);
+    open_wait(None);
+    structdiff::refresh(); // view A's rescan, still running
+    open_wait(Some("main...HEAD")); // replaces A with B
+    structdiff::refresh(); // B's first rescan has the same counter A's had
+    assert!(wait_until(5000, || !structdiff::busy()));
+    let (spec, files) = structdiff::with_view(|v| {
+        (v.model().spec.clone(), v.flat().iter().map(|&p| v.model().file(p).path.clone()).collect::<Vec<_>>())
+    })
+    .unwrap();
+    assert_eq!(spec, "main...HEAD");
+    assert_eq!(files, ["a.lua", "new.lua", "gone.md"]);
+    structdiff::close();
+}

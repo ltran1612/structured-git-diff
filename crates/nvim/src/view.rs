@@ -34,7 +34,20 @@ fn current_ns() -> u32 {
     api::create_namespace("structdiff-current")
 }
 
+/// Identifies a background rescan: the view that started it, and that
+/// view's rescan counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScanToken {
+    view: u64,
+    generation: u64,
+}
+
+static NEXT_VIEW_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 pub struct View {
+    /// Unique per view, so background work started by a closed view can't
+    /// act on its replacement.
+    id: u64,
     model: Model,
     current: Option<String>,
     collapsed: HashSet<String>,
@@ -95,6 +108,7 @@ impl View {
         ui::buf_opt(&panel_buf, "filetype", "structdiff");
         let current = Window::current();
         let mut view = Self {
+            id: NEXT_VIEW_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             model,
             current: None,
             collapsed: HashSet::new(),
@@ -187,17 +201,26 @@ impl View {
         self.watcher = watcher;
     }
 
-    /// Start a background rescan; returns its generation.
-    pub fn begin_scan(&mut self) -> u64 {
-        self.scan_gen += 1;
-        self.pending_scans += 1;
-        self.scan_gen
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
-    /// Finish a rescan; true when it is the latest one (apply its result).
-    pub fn finish_scan(&mut self, generation: u64) -> bool {
+    /// Start a background rescan.
+    pub fn begin_scan(&mut self) -> ScanToken {
+        self.scan_gen += 1;
+        self.pending_scans += 1;
+        ScanToken { view: self.id, generation: self.scan_gen }
+    }
+
+    /// Finish a rescan; true when its result should be applied: it was
+    /// started by this view and is the latest one. A rescan started by a
+    /// view that has since been replaced is ignored.
+    pub fn finish_scan(&mut self, token: ScanToken) -> bool {
+        if token.view != self.id {
+            return false;
+        }
         self.pending_scans = self.pending_scans.saturating_sub(1);
-        self.scan_gen == generation
+        self.scan_gen == token.generation
     }
 
     pub fn scanning(&self) -> bool {

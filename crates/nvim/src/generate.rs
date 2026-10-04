@@ -16,9 +16,15 @@ use crate::actions::{self, open_then, refresh_then};
 use crate::state::{self, with_view};
 use crate::{bg, ui};
 
+/// The one narrative generation that may run at a time.
+struct Job {
+    spec: String,
+    /// Set to ask it to stop.
+    cancel: Arc<AtomicBool>,
+}
+
 thread_local! {
-    /// Set to ask the running generation to stop.
-    static CANCEL: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+    static JOB: RefCell<Option<Job>> = const { RefCell::new(None) };
 }
 
 /// The fallback for changes nobody narrated: run the configured agent CLI
@@ -36,7 +42,8 @@ pub fn generate(spec: Option<String>) {
 
 /// Stop a running generation.
 pub fn cancel_generate() {
-    match CANCEL.with(|c| c.borrow().clone()) {
+    let running = JOB.with(|j| j.borrow().as_ref().map(|job| job.cancel.clone()));
+    match running {
         Some(flag) => {
             flag.store(true, Ordering::Relaxed);
             ui::notify("cancelling narrative generation…", ui::INFO);
@@ -46,24 +53,24 @@ pub fn cancel_generate() {
 }
 
 fn start() {
+    if let Some(spec) = JOB.with(|j| j.borrow().as_ref().map(|job| job.spec.clone())) {
+        let what = if spec.is_empty() { "the working tree".to_owned() } else { spec };
+        return ui::notify(&format!("already generating a narrative for {what} (:StructDiffCancel stops it)"), ui::INFO);
+    }
     let cfg = state::config();
     let started = with_view(|v| {
-        if v.generating() {
-            ui::notify("already generating", ui::INFO);
-            return None;
-        }
         v.set_generating(true);
         v.redraw(&cfg);
-        Some(v.model().clone())
+        Some((v.id(), v.model().clone()))
     })
     .flatten();
-    let Some(mut model) = started else { return };
+    let Some((view_id, mut model)) = started else { return };
     let grouping = cfg.grouping();
     let custom = cfg.custom_generate_cmd();
     let command_cfg = cfg.clone();
     let timeout = (cfg.generate_timeout > 0).then(|| Duration::from_secs(cfg.generate_timeout));
     let cancel = Arc::new(AtomicBool::new(false));
-    CANCEL.with(|c| *c.borrow_mut() = Some(cancel.clone()));
+    JOB.with(|j| *j.borrow_mut() = Some(Job { spec: model.spec.clone(), cancel: cancel.clone() }));
     ui::notify("generating narrative…", ui::INFO);
     let spawned = bg::spawn(
         move || {
@@ -88,10 +95,10 @@ fn start() {
                 }
             }
         },
-        finished,
+        move |res| finished(view_id, res),
     );
     if let Err(e) = spawned {
-        CANCEL.with(|c| c.borrow_mut().take());
+        JOB.with(|j| j.borrow_mut().take());
         with_view(|v| {
             v.set_generating(false);
             v.redraw(&cfg);
@@ -187,13 +194,25 @@ fn run(cmd: &[String], root: &Path, cancel: &AtomicBool, timeout: Option<Duratio
     Err(format!("narrative generation failed: {tail}"))
 }
 
-fn finished(res: Result<(), String>) {
-    CANCEL.with(|c| c.borrow_mut().take());
+fn finished(view_id: u64, res: Result<(), String>) {
+    JOB.with(|j| j.borrow_mut().take());
     match &res {
         Ok(()) => ui::notify("narrative ready", ui::INFO),
         Err(e) => ui::notify(e, ui::ERROR),
     }
-    with_view(|v| v.set_generating(false));
+    // Only the view that asked for it is updated. If it has been closed or
+    // replaced, the narrative file was still written; a view of the same
+    // range picks it up through its watcher.
+    let same_view = with_view(|v| {
+        let ours = v.id() == view_id;
+        if ours {
+            v.set_generating(false);
+        }
+        ours
+    });
+    if same_view != Some(true) {
+        return;
+    }
     refresh_then(Some(Box::new(|| {
         let cfg = state::config();
         with_view(|v| {
