@@ -55,9 +55,14 @@ lazy.nvim:
 
 `main` is needed because lazy.nvim only auto-detects Lua modules. `name` keeps the plugin's name (and its directory) as `structdiff.nvim` instead of the repo name. `:Lazy update` rebuilds automatically; to rebuild by hand, run `:Lazy build structdiff.nvim`, then restart Neovim.
 
-### The narrative skill
+### The skills
 
-`skill/diff-narrative/SKILL.md` is a plain agent skill. Claude Code, Codex and GitHub Copilot CLI all load that format, so the same file works in each. `install-skill.sh` copies it into each agent's skills folder:
+`skill/` holds two plain agent skills. Claude Code, Codex and GitHub Copilot CLI all load that format, so the same files work in each:
+
+- **`diff-narrative`** writes the change narrative (see [Where narratives come from](#where-narratives-come-from)).
+- **`structdiff-groups`** sets up grouping for a repo. It surveys the layout and what changes together, drafts a `.structdiff.json`, and checks it with `structdiff groups` before writing it. Ask your agent to "set up structdiff groups for this repo".
+
+`install-skill.sh` copies both into each agent's skills folder:
 
 ```sh
 ./install-skill.sh                 # every agent CLI found on PATH
@@ -67,13 +72,13 @@ lazy.nvim:
 
 | Agent | Installed to |
 |---|---|
-| Claude Code | `~/.claude/skills/diff-narrative` (or `$CLAUDE_CONFIG_DIR/skills`) |
-| Codex | `~/.agents/skills/diff-narrative` |
-| Copilot CLI | `~/.copilot/skills/diff-narrative` (or `$COPILOT_HOME/skills`) |
+| Claude Code | `~/.claude/skills/` (or `$CLAUDE_CONFIG_DIR/skills`) |
+| Codex | `~/.agents/skills/` |
+| Copilot CLI | `~/.copilot/skills/` (or `$COPILOT_HOME/skills`), but only when neither Claude Code nor Codex gets them: Copilot also loads their folders, so a third copy would appear twice |
 
-It copies rather than links, so you can run it from any checkout (with lazy.nvim, that's `~/.local/share/nvim/lazy/structdiff.nvim`) and then delete or move the checkout. Re-run it to update. A previous install of this skill is replaced; anything else at that path is moved to a `.bak` folder first. Restart running agent sessions afterwards.
+It copies rather than links, so you can run it from any checkout (with lazy.nvim, that's `~/.local/share/nvim/lazy/structdiff.nvim`) and then delete or move the checkout. Re-run it to update. A previous install of a skill is replaced; anything else at that path is first moved to `~/.structdiff-skill-backups/`, outside the skills folders, so the backup doesn't load as a skill. Restart running agent sessions afterwards.
 
-The skill works without the plugin. With the `structdiff` command on `PATH` (`./build.sh` installs it), its narratives match what the viewer computes and show as up to date. Without it they show as unverified.
+Both skills work without the plugin. With the `structdiff` command on `PATH` (`./build.sh` installs it), narratives match what the viewer computes and show as up to date, and `structdiff-groups` checks its drafts with the real regex engine. Without it, narratives show as unverified, and the grouping skill falls back to checking with Python.
 
 ## Usage
 
@@ -149,7 +154,7 @@ opts = {
 
 Default match order: Tests, CI, Config/Build, Docs, Source, Other (see `default_groups` in `crates/core/src/group.rs`). Tests comes before Source so `foo_test.go` lands in Tests.
 
-**Per-repo groups:** put a committable `.structdiff.json` at the repo root:
+**Per-repo groups:** put a committable `.structdiff.json` at the repo root. It replaces the groups entirely, so include every kind of file the repo has. The `structdiff-groups` skill can write it for you, and `structdiff groups` shows how it classifies every file:
 
 ```json
 { "groups": [ { "name": "Migrations", "patterns": ["^db/migrate/"] } ], "display_order": ["Migrations"] }
@@ -161,7 +166,7 @@ Once a narrative exists, its reading order wins: the group holding the story's f
 
 ## The narrative contract
 
-Everything lives in `<repo>/.structdiff/`. Viewing a diff writes nothing to your repo. The directory is only created by `:StructDiffGenerate` or `structdiff export`, and both add it to `.git/info/exclude`, so it never shows up in `git status`.
+Everything lives in `<repo>/.structdiff/`. Viewing a diff writes nothing to your repo. structdiff itself creates the directory only in `:StructDiffGenerate` and `structdiff export`, and both add it to `.git/info/exclude` (best effort), so it doesn't show up in `git status`. The skills create it through `structdiff export` when it's installed. An agent without `structdiff` may create it unexcluded; add `/.structdiff/` to `.gitignore` if that bothers you.
 
 - `groups.json` (written by `structdiff export`, which the skill runs first, and by `:StructDiffGenerate`): the range (`spec`, resolved `base`/`target` SHAs), the `output` file name, the groups and their files, a `fingerprint` of the change set, and the `grouping` (patterns) that produced the groups.
 - `narrative.json` for the working tree, or `narrative-<range>.json` for a range (characters outside `A-Za-z0-9._-` become `_`, so `origin/main...HEAD` → `narrative-origin_main...HEAD.json`). The skill writes it in this shape:
@@ -186,10 +191,13 @@ Any tool can produce this file. The skill is just the default producer.
 ## The `structdiff` command
 
 ```sh
-structdiff export [RANGE]   # write .structdiff/groups.json for RANGE and print its path
+structdiff export [RANGE]                  # write .structdiff/groups.json for RANGE and print its path
+structdiff groups [--config FILE] [--all]  # show how every file in the repo would be grouped
 ```
 
-`RANGE` works as in `:StructDiff`. The command computes the change set exactly as the viewer does, so a narrative written from any Claude Code session (`/diff-narrative main...HEAD`) shows as up to date in Neovim. Groups come from the repo's `.structdiff.json` if present, otherwise from the grouping recorded by the last export (so your Neovim `groups` config carries over), otherwise the defaults.
+`structdiff groups` prints any problems first: an unreadable or invalid `.structdiff.json`, invalid patterns, unknown keys (typos such as `"pattern"`), `display_order` names that match no group, and duplicate or fallback-named groups. It exits with 1 if there is any. Then it lists groups that match nothing, and each group in display order with sample files (every file with `--all`; Other shows up to 50). `--config` tries a draft `.structdiff.json` without installing it.
+
+For `export`, `RANGE` works as in `:StructDiff`. The command computes the change set exactly as the viewer does, so a narrative written from any Claude Code session (`/diff-narrative main...HEAD`) shows as up to date in Neovim. Groups come from the repo's `.structdiff.json` if present, otherwise from the grouping recorded by the last export (so your Neovim `groups` config carries over), otherwise the defaults.
 
 ## Configuration
 

@@ -246,6 +246,17 @@ impl Repo {
         run_raw(&self.root, &["show", &format!("{rev}:{path}")], None).ok()
     }
 
+    /// Every file git tracks, plus untracked files that aren't ignored: the
+    /// paths a grouping has to classify.
+    pub fn all_files(&self) -> Result<Vec<String>> {
+        let out = run(&self.root, &["ls-files", "--cached", "--others", "--exclude-standard", "-z"])?;
+        let mut files: Vec<String> =
+            out.split('\0').filter(|p| !p.is_empty() && !is_internal(p)).map(str::to_owned).collect();
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
     /// HEAD followed by branch, remote and tag names, for completion.
     pub fn refs(&self) -> Vec<String> {
         let out = run(

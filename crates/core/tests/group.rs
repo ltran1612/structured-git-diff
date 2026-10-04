@@ -115,13 +115,47 @@ fn repo_config_can_set_the_display_order() {
     .unwrap();
     let (g, _) = Grouping::default().for_repo(dir.path());
     assert_eq!(g.display, ["B", "A"]);
-    // Without display_order, the configured one is kept.
-    std::fs::write(dir.path().join(".structdiff.json"), r#"{"groups":[{"name":"A","patterns":["a"]}]}"#).unwrap();
-    assert_eq!(Grouping::default().for_repo(dir.path()).0.display, group::default_display_order());
+    // Without display_order, the configured one is kept, minus names this
+    // config doesn't define.
+    std::fs::write(dir.path().join(".structdiff.json"), r#"{"groups":[{"name":"Tests","patterns":["t"]},{"name":"A","patterns":["a"]}]}"#).unwrap();
+    assert_eq!(Grouping::default().for_repo(dir.path()).0.display, ["Tests"]);
 }
 
 #[test]
 fn groups_json_without_display_order_still_parses() {
     let g: Grouping = serde_json::from_str(r#"{"groups":[],"other":"Other"}"#).unwrap();
     assert_eq!(g.display, group::default_display_order());
+}
+
+#[test]
+fn with_repo_config_replaces_groups_and_optionally_display() {
+    let base = Grouping { other: "Misc".into(), ..Grouping::default() };
+    let g = base.with_repo_config(r#"{"groups":[{"name":"A","patterns":["a"]}],"display_order":["A"]}"#).unwrap();
+    assert_eq!(g.groups.len(), 1);
+    assert_eq!(g.display, ["A"]);
+    assert_eq!(g.other, "Misc");
+    // without display_order, inherited names this config doesn't define drop out
+    let g = base.with_repo_config(r#"{"groups":[]}"#).unwrap();
+    assert!(g.display.is_empty());
+    assert!(base.with_repo_config("{").is_err());
+}
+
+#[test]
+fn problems_and_strict_parsing() {
+    let base = Grouping::default();
+    assert!(base.problems().is_empty(), "{:?}", base.problems());
+    assert!(base.with_repo_config(r#"{"groups":[{"name":"A","pattern":["a"]}]}"#).is_err());
+    assert!(base.with_repo_config(r#"{"groups":[],"other":"X"}"#).is_err());
+    // an inherited display order only keeps names this config defines
+    let g = base.with_repo_config(r#"{"groups":[{"name":"Tests","patterns":["t"]},{"name":"Mine","patterns":["m"]}]}"#).unwrap();
+    assert_eq!(g.display, ["Tests"]);
+    assert!(g.problems().is_empty());
+}
+
+#[test]
+fn an_unreadable_repo_config_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".structdiff.json")).unwrap(); // a directory, not a file
+    let (_, warning) = Grouping::default().for_repo(dir.path());
+    assert!(warning.unwrap().contains("cannot read it"));
 }

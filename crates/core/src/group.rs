@@ -10,6 +10,7 @@ use crate::git::ChangedFile;
 /// A group definition. Patterns use Rust `regex` syntax and are matched
 /// against the repo-relative path (unanchored; use ^ and $).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GroupDef {
     pub name: String,
     #[serde(default)]
@@ -73,30 +74,65 @@ impl Default for Grouping {
 }
 
 impl Grouping {
-    /// The grouping for a repo: `<root>/.structdiff.json` `{"groups": [...]}`
-    /// replaces `self.groups` when present. Returns a warning when that file
-    /// is invalid.
-    pub fn for_repo(&self, root: &Path) -> (Grouping, Option<String>) {
+    /// Apply a `.structdiff.json`-style document on top of this grouping:
+    /// `{"groups": [...]}` replaces the groups, and the optional
+    /// `"display_order"` replaces the display order. The fallback name stays.
+    ///
+    /// Unknown keys are errors, so a typo like `"pattern"` or
+    /// `"displayOrder"` is reported instead of silently ignored.
+    pub fn with_repo_config(&self, json: &str) -> Result<Grouping, serde_json::Error> {
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct RepoConfig {
             groups: Vec<GroupDef>,
             display_order: Option<Vec<String>>,
         }
+        let cfg: RepoConfig = serde_json::from_str(json.trim_start_matches('\u{feff}'))?;
+        // An inherited display order keeps only names this config defines,
+        // so `problems` only flags names the file itself got wrong.
+        let display = cfg.display_order.unwrap_or_else(|| {
+            self.display.iter().filter(|n| cfg.groups.iter().any(|g| &g.name == *n)).cloned().collect()
+        });
+        Ok(Grouping { groups: cfg.groups, other: self.other.clone(), display })
+    }
+
+    /// The grouping for a repo: `<root>/.structdiff.json`, if present, applied
+    /// with [`Grouping::with_repo_config`]. Returns a warning when that file is
+    /// invalid.
+    pub fn for_repo(&self, root: &Path) -> (Grouping, Option<String>) {
         let path = root.join(".structdiff.json");
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return (self.clone(), None);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (self.clone(), None),
+            Err(e) => return (self.clone(), Some(format!("ignoring {}: cannot read it: {e}", path.display()))),
         };
-        match serde_json::from_str::<RepoConfig>(&text) {
-            Ok(cfg) => (
-                Grouping {
-                    groups: cfg.groups,
-                    other: self.other.clone(),
-                    display: cfg.display_order.unwrap_or_else(|| self.display.clone()),
-                },
-                None,
-            ),
+        match self.with_repo_config(&text) {
+            Ok(grouping) => (grouping, None),
             Err(e) => (self.clone(), Some(format!("ignoring invalid {}: {e}", path.display()))),
         }
+    }
+
+    /// Mistakes that parse fine but make the grouping behave unexpectedly.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for g in &self.groups {
+            if !seen.insert(g.name.as_str()) {
+                problems.push(format!("group {:?} is defined twice; only the first one gets files", g.name));
+            }
+            if g.name == self.other {
+                problems.push(format!("group {:?} has the fallback group's name", g.name));
+            }
+            if g.patterns.is_empty() {
+                problems.push(format!("group {:?} has no patterns", g.name));
+            }
+        }
+        for name in &self.display {
+            if name != &self.other && !self.groups.iter().any(|g| &g.name == name) {
+                problems.push(format!("display_order names {name:?}, but no group has that name"));
+            }
+        }
+        problems
     }
 }
 
