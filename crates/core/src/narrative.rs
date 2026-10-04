@@ -104,7 +104,9 @@ pub fn export_groups(
     fingerprint: &str,
     grouping: &Grouping,
 ) -> std::io::Result<PathBuf> {
-    ensure_excluded(&repo.exclude)?;
+    // Best effort: in a read-only .git (a sandboxed agent, say) the export
+    // still works; .structdiff/ just isn't excluded from git.
+    let _ = ensure_excluded(&repo.exclude);
     let root = &repo.root;
     let export = Export {
         version: VERSION,

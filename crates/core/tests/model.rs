@@ -137,3 +137,21 @@ fn export_records_the_base_grouping_not_the_repo_file() {
     // groups once that file is gone: the record is the Neovim-side base.
     assert_eq!(narrative::exported_grouping(&r.root), Some(base));
 }
+
+#[test]
+fn export_works_when_git_info_is_read_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = repo(&[("a.lua", "a\n")]);
+    write(&r.root, "a.lua", "b\n");
+    let info = r.root.join(".git/info");
+    std::fs::create_dir_all(&info).unwrap();
+    let exclude = info.join("exclude");
+    std::fs::write(&exclude, "# fresh\n").unwrap();
+    std::fs::set_permissions(&exclude, std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::set_permissions(&info, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (m, _) = Model::load(Repo::discover(&r.root).unwrap(), "", &Grouping::default()).unwrap();
+    let res = m.export(&Grouping::default());
+    std::fs::set_permissions(&info, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&exclude, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(res.unwrap(), r.root.join(".structdiff/groups.json"));
+}
