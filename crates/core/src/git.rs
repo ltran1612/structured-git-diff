@@ -156,6 +156,9 @@ impl Repo {
             args.push(t);
         }
         args.extend_from_slice(extra);
+        // Without "--", a file named like a revision (say, HEAD) makes git
+        // refuse the command as ambiguous.
+        args.push("--");
         args
     }
 
@@ -188,12 +191,12 @@ impl Repo {
         // the real content. Hashing git's raw output directly would make
         // `git add` alone change the fingerprint (the right-hand id goes from
         // all-zeros to the real id).
-        let mut resolved: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        if !to_hash.is_empty() {
-            let input = to_hash.join("\n") + "\n";
-            let hashes = run_raw(&self.root, &["hash-object", "--stdin-paths"], Some(input.as_bytes()))?;
-            resolved.extend(to_hash.iter().cloned().zip(String::from_utf8_lossy(&hashes).lines().map(str::to_owned)));
-        }
+        // Ids are computed here rather than by `git hash-object`, which
+        // fails the whole batch on one path it can't hash (a nested repo, a
+        // symlink to a directory, a dangling symlink) and mis-reads names
+        // starting with a quote.
+        let resolved: std::collections::HashMap<String, String> =
+            to_hash.iter().map(|p| (p.clone(), worktree_id(&self.root, p))).collect();
         let mut lines: Vec<String> = entries
             .iter()
             .filter(|e| !is_internal(&e.file.path))
@@ -252,6 +255,43 @@ impl Repo {
         .unwrap_or_default();
         std::iter::once("HEAD".to_owned()).chain(out.lines().map(str::to_owned)).collect()
     }
+}
+
+/// Git's blob id for `bytes`: SHA-1 over `"blob <len>\0"` and the bytes.
+fn blob_id(bytes: &[u8]) -> String {
+    use sha1::{Digest as _, Sha1};
+    let mut h = Sha1::new();
+    h.update(format!("blob {}\0", bytes.len()).as_bytes());
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A content id for a working-tree path, for the fingerprint. For regular
+/// files and symlinks it is the id git would store (without clean filters
+/// such as autocrlf or LFS), so staging a file doesn't change the
+/// fingerprint. Paths git couldn't hash still get a stable id: a directory
+/// (a nested repo, or an untracked folder git lists as `dir/`) by its
+/// HEAD commit, anything unreadable by kind.
+pub fn worktree_id(root: &Path, path: &str) -> String {
+    let full = root.join(path.trim_end_matches('/'));
+    let Ok(meta) = std::fs::symlink_metadata(&full) else { return "missing".into() };
+    if meta.file_type().is_symlink() {
+        return match std::fs::read_link(&full) {
+            #[cfg(unix)]
+            Ok(target) => blob_id(std::os::unix::ffi::OsStrExt::as_bytes(target.as_os_str())),
+            #[cfg(not(unix))]
+            Ok(target) => blob_id(target.to_string_lossy().as_bytes()),
+            Err(_) => "unreadable-link".into(),
+        };
+    }
+    if meta.is_dir() {
+        let head = run(&full, &["rev-parse", "HEAD"]).unwrap_or_default();
+        return format!("dir:{}", head.trim());
+    }
+    if meta.is_file() {
+        return std::fs::read(&full).map_or_else(|_| "unreadable".into(), |bytes| blob_id(&bytes));
+    }
+    "special".into()
 }
 
 /// The result of [`Repo::scan`].

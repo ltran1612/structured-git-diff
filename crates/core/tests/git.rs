@@ -182,3 +182,45 @@ fn unrelated_histories_have_no_merge_base() {
 fn summary(files: &[structdiff_core::ChangedFile]) -> Vec<String> {
     files.iter().map(|f| format!("{} {}", f.status, f.path)).collect()
 }
+
+#[test]
+fn awkward_working_tree_paths_do_not_break_the_scan() {
+    let r = repo(&[("a.lua", "a\n"), ("HEAD", "a file named like a revision\n")]);
+    let root = &r.root;
+    write(root, "HEAD", "edited\n");
+    // a nested repository (what `git worktree add` or a vendored clone leaves)
+    write(root, "vendor/lib/x.c", "x\n");
+    git(&root.join("vendor/lib"), &["init", "-q"]);
+    // symlinks: to a directory, and dangling
+    std::os::unix::fs::symlink("vendor", root.join("link-to-dir")).unwrap();
+    std::os::unix::fs::symlink("nowhere", root.join("dangling")).unwrap();
+    // a name git would C-quote
+    write(root, "\"quoted\".txt", "q\n");
+    let repo = Repo::discover(root).unwrap();
+    let range = repo.resolve_range("").unwrap();
+    let scan = repo.scan(&range).expect("scan should survive awkward paths");
+    let paths: Vec<&str> = scan.files.iter().map(|f| f.path.as_str()).collect();
+    for p in ["HEAD", "vendor/lib/", "link-to-dir", "dangling", "\"quoted\".txt"] {
+        assert!(paths.contains(&p), "{p} missing from {paths:?}");
+    }
+    // editing the quoted-name file still changes the fingerprint
+    write(root, "\"quoted\".txt", "q2\n");
+    assert_ne!(repo.scan(&range).unwrap().fingerprint, scan.fingerprint);
+}
+
+
+#[test]
+fn our_content_ids_match_gits() {
+    let r = repo(&[("a.lua", "a\n")]);
+    write(&r.root, "a.lua", "changed content\n");
+    std::os::unix::fs::symlink("a.lua", r.root.join("link")).unwrap();
+    git(&r.root, &["add", "link"]);
+    let staged_link = git(&r.root, &["ls-files", "-s", "link"]); // "<mode> <id> <stage>\tlink"
+    let ids = [
+        ("a.lua", git(&r.root, &["hash-object", "--no-filters", "a.lua"]).trim().to_owned()),
+        ("link", staged_link.split_whitespace().nth(1).unwrap().to_owned()),
+    ];
+    for (path, theirs) in ids {
+        assert_eq!(structdiff_core::git::worktree_id(&r.root, path), theirs, "{path}");
+    }
+}
