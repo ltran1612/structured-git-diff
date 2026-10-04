@@ -254,13 +254,26 @@ impl View {
         ui::win_opt(&self.sidebar, "signcolumn", "no");
         ui::win_opt(&self.sidebar, "foldcolumn", "0");
         ui::win_opt(&self.sidebar, "statuscolumn", "");
+        // Keep <C-o>, <C-^>, :edit etc. from replacing the panel.
+        ui::win_opt(&self.sidebar, "winfixbuf", true);
         self.sidebar.set_width(cfg.sidebar_width)?;
         api::command("wincmd =")
+    }
+
+    fn sidebar_shows_panel(&self) -> bool {
+        self.sidebar.get_buf().is_ok_and(|b| b == self.panel_buf)
     }
 
     /// Rebuild the windows if the user closed some of them.
     fn ensure_layout(&mut self, cfg: &Config) -> Result<(), api::Error> {
         if [&self.sidebar, &self.left, &self.right].iter().all(|w| ui::same_tab(w, &self.tab)) {
+            if !self.sidebar_shows_panel() {
+                // Something got past 'winfixbuf' (the API, or the user
+                // turned it off): put the panel back.
+                ui::win_opt(&self.sidebar, "winfixbuf", false);
+                self.sidebar.set_buf(&self.panel_buf)?;
+                ui::win_opt(&self.sidebar, "winfixbuf", true);
+            }
             return Ok(());
         }
         api::set_current_tabpage(&self.tab)?;
@@ -497,8 +510,11 @@ impl View {
     }
 
     pub fn focus_current(&mut self) {
+        // Only move the cursor in the panel, never in a file that ended up
+        // in the sidebar window.
         if let Some(row) = self.current_row()
             && self.sidebar.is_valid()
+            && self.sidebar_shows_panel()
         {
             let _ = self.sidebar.set_cursor(row + 1, 2);
         }

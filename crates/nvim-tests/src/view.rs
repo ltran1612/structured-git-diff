@@ -687,3 +687,25 @@ fn the_users_own_buffer_maps_survive_the_view() {
     assert!(!maps.iter().any(|m| m.lhs == "]g"), "our ]g left behind");
     structdiff::close();
 }
+
+#[nvim_oxi::test]
+fn the_sidebar_keeps_its_panel() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    let (sidebar, panel_buf) = structdiff::with_view(|v| (v.sidebar().clone(), v.panel_buf().clone())).unwrap();
+    api::set_current_win(&sidebar).unwrap();
+    // :edit in the sidebar is refused ('winfixbuf')...
+    assert!(api::command("edit lua/util.lua").is_err());
+    assert_eq!(sidebar.get_buf().unwrap(), panel_buf);
+    // ...and if a file lands there anyway, the next update puts the panel back
+    api::command("setlocal nowinfixbuf | edit lua/util.lua").unwrap();
+    let util = sidebar.get_buf().unwrap();
+    let cursor_before = sidebar.get_cursor().unwrap();
+    structdiff::goto_file(1);
+    assert_eq!(sidebar.get_buf().unwrap(), panel_buf);
+    // the user's file wasn't scrolled around in the meantime
+    assert_eq!(util.get_lines(.., false).unwrap().count(), 1);
+    let _ = cursor_before;
+    structdiff::close();
+}
