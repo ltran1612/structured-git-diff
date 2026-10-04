@@ -15,7 +15,7 @@ fn diff_on(win: &api::Window) -> bool {
 fn view_groups_files_and_navigates_across_groups() {
     let r = sample_repo();
     start(&r.root);
-    structdiff::open(None);
+    open_wait(None);
     assert_eq!(group_names(), ["Tests", "Docs", "Source"]);
     let p = panel();
     assert_eq!(p[0], " StructDiff  4 files");
@@ -53,7 +53,7 @@ fn view_groups_files_and_navigates_across_groups() {
 fn narrative_feeds_reasons_order_split_and_staleness() {
     let r = sample_repo();
     start(&r.root);
-    structdiff::open(None);
+    open_wait(None);
     let fp = structdiff::with_view(|v| v.model.fingerprint.clone()).unwrap();
     std::fs::write(
         narrative::path(&r.root, ""),
@@ -82,7 +82,7 @@ fn narrative_feeds_reasons_order_split_and_staleness() {
     assert_eq!(structdiff::with_view(|v| v.narrative_open()), Some(false));
 
     write(&r.root, "lua/util.lua", "return 3\n");
-    structdiff::refresh();
+    refresh_wait();
     assert_eq!(structdiff::with_view(|v| v.model.state), Some(State::Stale));
     assert!(panel()[2].contains("stale"), "{}", panel()[2]);
     structdiff::close();
@@ -92,7 +92,7 @@ fn narrative_feeds_reasons_order_split_and_staleness() {
 fn watcher_reloads_when_the_narrative_file_is_written() {
     let r = sample_repo();
     start(&r.root);
-    structdiff::open(None);
+    open_wait(None);
     let fp = structdiff::with_view(|v| v.model.fingerprint.clone()).unwrap();
     std::fs::write(narrative::path(&r.root, ""), serde_json::json!({"fingerprint": fp, "overall": "x"}).to_string()).unwrap();
     assert!(wait_until(3000, || structdiff::with_view(|v| v.model.state) == Some(State::Fresh)));
@@ -111,11 +111,13 @@ fn generate_runs_the_command_in_the_background_and_reloads() {
     )
     .unwrap();
     structdiff::setup(opts);
-    structdiff::open(None);
+    open_wait(None);
     structdiff::generate(None);
     assert_eq!(structdiff::with_view(|v| v.generating), Some(true));
     assert_eq!(panel()[2], " generating narrative…");
-    assert!(wait_until(5000, || structdiff::with_view(|v| !v.generating).unwrap_or(false)));
+    assert!(wait_until(5000, || {
+        structdiff::with_view(|v| !v.generating).unwrap_or(false) && !structdiff::busy()
+    }));
     let overall = structdiff::with_view(|v| v.model.narrative.as_ref().map(|n| n.overall.clone())).flatten();
     assert_eq!(overall.as_deref(), Some("generated for []"));
     assert_eq!(structdiff::with_view(|v| v.narrative_open()), Some(true));
@@ -126,7 +128,7 @@ fn generate_runs_the_command_in_the_background_and_reloads() {
 fn branch_range_uses_read_only_revisions_and_its_own_narrative() {
     let r = branch_repo();
     start(&r.root);
-    structdiff::open(Some("main...HEAD".into()));
+    open_wait(Some("main...HEAD"));
     assert_eq!(panel()[1], " main...HEAD");
     let flat: Vec<String> = structdiff::with_view(|v| v.flat().iter().map(|&p| v.model.file(p).path.clone()).collect()).unwrap();
     assert_eq!(flat, ["gone.md", "a.lua", "new.lua"]);
@@ -144,7 +146,7 @@ fn branch_range_uses_read_only_revisions_and_its_own_narrative() {
     assert_eq!(ft, "lua");
 
     // switching range replaces the view
-    structdiff::open(None);
+    open_wait(None);
     assert_eq!(panel()[1], " HEAD → working tree");
     structdiff::close();
 }
@@ -154,7 +156,7 @@ fn close_removes_the_tab_and_real_buffer_keymaps() {
     let r = sample_repo();
     start(&r.root);
     let tabs = structdiff::ui::tab_count();
-    structdiff::open(None);
+    open_wait(None);
     assert_eq!(structdiff::ui::tab_count(), tabs + 1);
     structdiff::goto_group(2); // lua/backoff.lua, a real buffer
     let buf = structdiff::with_view(|v| v.real_buf.clone()).flatten().expect("real buffer");
@@ -175,7 +177,7 @@ fn close_removes_the_tab_and_real_buffer_keymaps() {
 fn layout_is_rebuilt_when_a_diff_window_is_closed() {
     let r = sample_repo();
     start(&r.root);
-    structdiff::open(None);
+    open_wait(None);
     let left = structdiff::with_view(|v| v.left.clone()).unwrap();
     left.close(true).unwrap();
     structdiff::goto_file(1);
@@ -192,6 +194,7 @@ fn commands_and_completion_are_registered() {
     let got: Vec<String> = api::call_function("getcompletion", ("StructDiff main...fe", "cmdline")).unwrap();
     assert_eq!(got, ["main...feature"]);
     api::command("StructDiff main...").unwrap();
+    assert!(wait_until(5000, || !structdiff::busy()));
     assert_eq!(panel()[1], " main...");
     api::command("StructDiffClose").unwrap();
     assert!(structdiff::with_view(|_| ()).is_none());
@@ -202,7 +205,7 @@ fn unknown_revision_opens_nothing() {
     let r = sample_repo();
     start(&r.root);
     let tabs = structdiff::ui::tab_count();
-    structdiff::open(Some("nope...HEAD".into()));
+    open_wait(Some("nope...HEAD"));
     assert!(structdiff::with_view(|_| ()).is_none());
     assert_eq!(structdiff::ui::tab_count(), tabs);
 }
@@ -211,7 +214,7 @@ fn unknown_revision_opens_nothing() {
 fn user_closing_the_tab_cleans_up() {
     let r = sample_repo();
     start(&r.root);
-    structdiff::open(None);
+    open_wait(None);
     api::command("tabclose").unwrap();
     assert!(wait_until(1000, || structdiff::with_view(|_| ()).is_none()));
 }
@@ -232,4 +235,29 @@ fn setup_merges_partial_options_and_rejects_bad_ones() {
     assert_eq!(structdiff::config().groups.len(), 1); // lists replace
     structdiff::setup(lua("{ sidebar_width = 'wide' }"));
     assert_eq!(structdiff::config().groups.len(), 1); // bad options are reported, config unchanged
+}
+
+#[nvim_oxi::test]
+fn open_does_not_block_and_reports_progress() {
+    let r = sample_repo();
+    start(&r.root);
+    structdiff::open(None);
+    // Returned before git finished: no view yet, but busy.
+    assert!(structdiff::busy());
+    assert!(wait_until(5000, || !structdiff::busy()));
+    assert_eq!(current().as_deref(), Some("tests/core_spec.lua"));
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn overlapping_refreshes_apply_only_the_latest() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    write(&r.root, "lua/util.lua", "return 3\n");
+    structdiff::refresh();
+    structdiff::refresh();
+    assert!(wait_until(5000, || !structdiff::busy()));
+    assert_eq!(structdiff::with_view(|v| v.model.file_count()), Some(5));
+    structdiff::close();
 }

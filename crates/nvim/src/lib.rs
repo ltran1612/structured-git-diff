@@ -19,19 +19,19 @@
 //!
 //! [`init`] refuses to load on any Neovim other than 0.12.
 
+mod bg;
 pub mod config;
 mod keys;
 pub mod ui;
 pub mod view;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::time::{Duration, SystemTime};
 
 use nvim_oxi::api::{self, opts::*, types::*};
-use nvim_oxi::libuv::{AsyncHandle, TimerHandle};
+use nvim_oxi::libuv::TimerHandle;
 use nvim_oxi::{Dictionary, Function, Object};
 use structdiff_core::{Model, Repo, git, narrative};
 
@@ -41,6 +41,16 @@ use view::{Item, View};
 thread_local! {
     static VIEW: RefCell<Option<View>> = const { RefCell::new(None) };
     static CONFIG: RefCell<Option<Config>> = const { RefCell::new(None) };
+    /// A view is being loaded on a background thread.
+    static LOADING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Something to run on the main loop once background work has landed.
+type Then = Option<Box<dyn FnOnce()>>;
+
+/// True while a view is loading or rescanning in the background.
+pub fn busy() -> bool {
+    LOADING.with(Cell::get) || with_view(|v| v.pending_scans > 0).unwrap_or(false)
 }
 
 pub fn config() -> Config {
@@ -78,16 +88,24 @@ pub fn setup(opts: Object) {
 }
 
 /// Open the view. `spec` picks what to compare (see `Repo::resolve_range`).
-/// The same spec again refreshes; a different spec replaces the view.
+/// The same spec again refreshes; a different spec replaces the view. Git
+/// runs on a background thread; the view appears when it's done.
 pub fn open(spec: Option<String>) {
-    let spec = spec.unwrap_or_default().trim().to_owned();
+    open_then(spec.unwrap_or_default(), None);
+}
+
+fn open_then(spec: String, then: Then) {
+    let spec = spec.trim().to_owned();
     let existing = with_view(|v| (v.model.spec.clone(), v.tab.clone()));
     if let Some((open_spec, tab)) = existing {
         if open_spec == spec && tab.is_valid() {
             report(api::set_current_tabpage(&tab));
-            return refresh();
+            return refresh_then(then);
         }
         close();
+    }
+    if LOADING.with(Cell::get) {
+        return ui::notify("already loading", ui::INFO);
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo = match Repo::discover(&cwd) {
@@ -95,19 +113,48 @@ pub fn open(spec: Option<String>) {
         Err(e) => return ui::notify(&format!("not a git repository: {e}"), ui::ERROR),
     };
     let cfg = config();
-    let (model, warnings) = match Model::load(repo, &spec, &cfg.groups, &cfg.other_group) {
+    let (groups, other) = (cfg.groups.clone(), cfg.other_group.clone());
+    LOADING.with(|l| l.set(true));
+    let started = bg::spawn(
+        move || Model::load(repo, &spec, &groups, &other),
+        move |res| {
+            LOADING.with(|l| l.set(false));
+            if finish_open(res, cfg)
+                && let Some(then) = then
+            {
+                then();
+            }
+        },
+    );
+    if let Err(e) = started {
+        LOADING.with(|l| l.set(false));
+        ui::notify(&e, ui::ERROR);
+    }
+}
+
+/// Create the view for a freshly loaded model. False when there is nothing
+/// to show.
+fn finish_open(res: Result<(Model, Vec<String>), String>, cfg: Config) -> bool {
+    let (model, warnings) = match res {
         Ok(m) => m,
-        Err(e) => return ui::notify(&e, ui::ERROR),
+        Err(e) => {
+            ui::notify(&e, ui::ERROR);
+            return false;
+        }
     };
     notify_all(warnings);
     if model.file_count() == 0 {
-        return ui::notify(&format!("no changes in {}", model.range.describe()), ui::INFO);
+        ui::notify(&format!("no changes in {}", model.range.describe()), ui::INFO);
+        return false;
     }
     let has_narrative = model.narrative.is_some();
     let watch_path = narrative::path(&model.repo.root, &model.spec);
     let mut v = match View::new(model, cfg.clone()) {
         Ok(v) => v,
-        Err(e) => return ui::notify(&e.to_string(), ui::ERROR),
+        Err(e) => {
+            ui::notify(&e.to_string(), ui::ERROR);
+            return false;
+        }
     };
     keys::map_panel(&mut v.panel_buf, &cfg);
     v.watcher = watch(watch_path);
@@ -120,25 +167,57 @@ pub fn open(spec: Option<String>) {
         report(api::set_current_win(&v.sidebar));
         v.focus_current();
     });
+    true
 }
 
+/// Rescan git in the background and redraw. Rescans may overlap; only the
+/// latest one's result is applied.
 pub fn refresh() {
-    let warnings = with_view(|v| v.model.rescan());
-    match warnings {
-        None => {}
-        Some(Err(e)) => ui::notify(&e, ui::ERROR),
-        Some(Ok(w)) => {
-            notify_all(w);
-            let empty = with_view(|v| v.model.file_count() == 0).unwrap_or(false);
-            if empty {
+    refresh_then(None);
+}
+
+fn refresh_then(then: Then) {
+    let Some((mut model, scan)) = with_view(|v| {
+        v.scan_gen += 1;
+        v.pending_scans += 1;
+        (v.model.clone(), v.scan_gen)
+    }) else {
+        return;
+    };
+    let started = bg::spawn(
+        move || {
+            let res = model.rescan();
+            (model, res)
+        },
+        move |(model, res)| {
+            let latest = with_view(|v| {
+                v.pending_scans -= 1;
+                v.scan_gen == scan
+            });
+            if latest != Some(true) {
+                return;
+            }
+            match res {
+                Err(e) => return ui::notify(&e, ui::ERROR),
+                Ok(w) => notify_all(w),
+            }
+            if model.file_count() == 0 {
                 ui::notify("no changes left", ui::INFO);
                 return close();
             }
             with_view(|v| {
+                v.model = model;
                 let idx = v.current_index().unwrap_or(0);
                 report(v.show(idx));
             });
-        }
+            if let Some(then) = then {
+                then();
+            }
+        },
+    );
+    if let Err(e) = started {
+        with_view(|v| v.pending_scans -= 1);
+        ui::notify(&e, ui::ERROR);
     }
 }
 
@@ -273,58 +352,54 @@ pub fn generate(spec: Option<String>) {
     let spec = spec.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
     let open_spec = with_view(|v| v.model.spec.clone());
     if open_spec.is_none() || (spec.is_some() && spec != open_spec) {
-        open(spec);
+        return open_then(spec.unwrap_or_default(), Some(Box::new(start_generate)));
     }
+    start_generate();
+}
+
+fn start_generate() {
     let started = with_view(|v| {
         if v.generating {
             ui::notify("already generating", ui::INFO);
             return None;
         }
-        // Refresh groups.json and the fingerprint for the skill.
-        if let Err(e) = v.model.rescan() {
-            ui::notify(&e, ui::ERROR);
-            return None;
-        }
         v.generating = true;
         v.redraw();
-        Some((v.cfg.generate_cmd_for(&v.model.spec), v.model.repo.root.clone()))
-    });
-    let Some(Some((cmd, root))) = started else { return };
+        Some((v.model.clone(), v.cfg.generate_cmd_for(&v.model.spec)))
+    })
+    .flatten();
+    let Some((mut model, cmd)) = started else { return };
     ui::notify("generating narrative…", ui::INFO);
+    let spawned = bg::spawn(
+        move || {
+            // Refresh groups.json and the fingerprint for the skill.
+            model.rescan()?;
+            run_generate_cmd(&cmd, &model.repo.root)
+        },
+        generated,
+    );
+    if let Err(e) = spawned {
+        with_view(|v| {
+            v.generating = false;
+            v.redraw();
+        });
+        ui::notify(&e, ui::ERROR);
+    }
+}
 
-    let (tx, rx) = mpsc::channel::<Result<(), String>>();
-    let handle = AsyncHandle::new(move || {
-        if let Ok(res) = rx.try_recv() {
-            nvim_oxi::schedule(move |_| generated(res));
-        }
-        Ok::<_, Infallible>(())
-    });
-    let handle = match handle {
-        Ok(h) => h,
-        Err(e) => {
-            with_view(|v| v.generating = false);
-            return ui::notify(&e.to_string(), ui::ERROR);
-        }
-    };
-    std::thread::spawn(move || {
-        let res = std::process::Command::new(&cmd[0])
-            .args(&cmd[1..])
-            .current_dir(root)
-            .stdin(std::process::Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run {}: {e}", cmd[0]))
-            .and_then(|out| {
-                if out.status.success() {
-                    return Ok(());
-                }
-                let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
-                let err = err.trim();
-                let tail: String = err.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
-                Err(format!("narrative generation failed: {tail}"))
-            });
-        let _ = tx.send(res);
-        let _ = handle.send();
-    });
+fn run_generate_cmd(cmd: &[String], root: &std::path::Path) -> Result<(), String> {
+    let out = std::process::Command::new(&cmd[0])
+        .args(&cmd[1..])
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", cmd[0]))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
+    let tail: String = err.trim().chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
+    Err(format!("narrative generation failed: {tail}"))
 }
 
 fn generated(res: Result<(), String>) {
@@ -332,14 +407,14 @@ fn generated(res: Result<(), String>) {
         Ok(()) => ui::notify("narrative ready", ui::INFO),
         Err(e) => ui::notify(e, ui::ERROR),
     }
-    with_view(|v| {
-        v.generating = false;
-        notify_all(v.model.reload_narrative());
-        v.redraw();
-        if v.model.narrative.is_some() {
-            report(v.open_narrative());
-        }
-    });
+    with_view(|v| v.generating = false);
+    refresh_then(Some(Box::new(|| {
+        with_view(|v| {
+            if v.model.narrative.is_some() {
+                report(v.open_narrative());
+            }
+        });
+    })));
 }
 
 // Registration ---------------------------------------------------------------

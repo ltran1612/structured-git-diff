@@ -4,10 +4,17 @@ use common::*;
 use structdiff_core::git::{self, ChangedFile, Repo};
 
 #[test]
-fn parse_name_status_handles_renames_and_type_changes() {
-    let out = "M\0a.lua\0R087\0old.lua\0new.lua\0D\0gone.txt\0T\0link\0";
+fn parse_raw_handles_renames_type_changes_and_unknown_hashes() {
+    let z = "0".repeat(40);
+    let a = "a".repeat(40);
+    let out = format!(
+        ":100644 100644 {a} {z} M\0a.lua\0:100644 100644 {a} {a} R087\0old.lua\0new.lua\0\
+         :100644 000000 {a} {z} D\0gone.txt\0:120000 100644 {a} {a} T\0link\0"
+    );
+    let entries = git::parse_raw(&out);
+    let files: Vec<ChangedFile> = entries.iter().map(|e| e.file.clone()).collect();
     assert_eq!(
-        git::parse_name_status(out),
+        files,
         vec![
             ChangedFile::new('M', "a.lua"),
             ChangedFile { status: 'R', path: "new.lua".into(), old_path: Some("old.lua".into()) },
@@ -15,6 +22,18 @@ fn parse_name_status_handles_renames_and_type_changes() {
             ChangedFile::new('M', "link"),
         ]
     );
+    assert_eq!(entries[0].dst_sha, z);
+    assert_eq!(entries[1].dst_sha, a);
+}
+
+#[test]
+fn structdiff_scratch_files_are_never_changes() {
+    let r = repo(&[("a.lua", "a\n")]);
+    write(&r.root, ".structdiff/narrative.json", "{}"); // not yet excluded
+    write(&r.root, "b.lua", "b\n");
+    let repo = Repo::discover(&r.root).unwrap();
+    let range = repo.resolve_range("").unwrap();
+    assert_eq!(summary(&repo.scan(&range).unwrap().files), ["? b.lua"]);
 }
 
 #[test]
@@ -30,7 +49,7 @@ fn changed_files_covers_staged_unstaged_untracked_deleted_renamed() {
     let range = repo.resolve_range("").unwrap();
     assert_eq!(range.base, "HEAD");
     assert_eq!(range.target, None);
-    let files = repo.changed_files(&range).unwrap();
+    let files = repo.scan(&range).unwrap().files;
     assert_eq!(summary(&files), ["M a.lua", "D b.lua", "R new name.lua", "A staged.lua", "? untracked.md"]);
     assert_eq!(files[2].old_path.as_deref(), Some("old name.lua"));
 }
@@ -40,7 +59,7 @@ fn fingerprint_changes_with_tracked_and_untracked_edits() {
     let r = repo(&[("a.lua", "a\n")]);
     let repo = Repo::discover(&r.root).unwrap();
     let range = repo.resolve_range("").unwrap();
-    let fp = || repo.fingerprint(&range, &repo.changed_files(&range).unwrap());
+    let fp = || repo.scan(&range).unwrap().fingerprint;
     write(&r.root, "a.lua", "a2\n");
     write(&r.root, "new.txt", "1\n");
     let fp1 = fp();
@@ -50,7 +69,14 @@ fn fingerprint_changes_with_tracked_and_untracked_edits() {
     let fp2 = fp();
     assert_ne!(fp1, fp2, "untracked edit should change fingerprint");
     write(&r.root, "a.lua", "a3\n");
-    assert_ne!(fp2, fp(), "tracked edit should change fingerprint");
+    let fp3 = fp();
+    assert_ne!(fp2, fp3, "tracked edit should change fingerprint");
+    // staging an edit doesn't change the change set against HEAD
+    git(&r.root, &["add", "a.lua"]);
+    assert_eq!(fp3, fp(), "staging alone should not change fingerprint");
+    // but editing a staged file again does
+    write(&r.root, "a.lua", "a4\n");
+    assert_ne!(fp3, fp(), "edit after staging should change fingerprint");
 }
 
 #[test]
@@ -62,7 +88,7 @@ fn repo_without_commits_diffs_against_the_empty_tree() {
     let range = repo.resolve_range("").unwrap();
     assert_eq!(range.base, git::EMPTY_TREE);
     assert_eq!(range.left_label, "empty");
-    assert_eq!(summary(&repo.changed_files(&range).unwrap()), ["A x.lua"]);
+    assert_eq!(summary(&repo.scan(&range).unwrap().files), ["A x.lua"]);
 }
 
 #[test]
@@ -74,7 +100,7 @@ fn three_dots_uses_the_merge_base_and_ignores_uncommitted_changes() {
     assert_eq!(range.target.as_deref(), Some(git(&r.root, &["rev-parse", "HEAD"]).trim()));
     assert_eq!(range.left_label, "merge-base(main)");
     assert_eq!(range.right_label, "HEAD");
-    assert_eq!(summary(&repo.changed_files(&range).unwrap()), ["M a.lua", "D gone.md", "A new.lua"]);
+    assert_eq!(summary(&repo.scan(&range).unwrap().files), ["M a.lua", "D gone.md", "A new.lua"]);
     assert_eq!(repo.content(range.target.as_ref().unwrap(), "a.lua").unwrap(), b"a feature\n");
     // an empty right side means HEAD
     assert_eq!(repo.resolve_range("main...").unwrap().base, range.base);
@@ -88,7 +114,7 @@ fn two_dots_compares_the_two_tips_directly() {
     assert_eq!(range.base, git(&r.root, &["rev-parse", "main"]).trim());
     // main's own commit shows up as a change too, unlike with "..."
     assert_eq!(
-        summary(&repo.changed_files(&range).unwrap()),
+        summary(&repo.scan(&range).unwrap().files),
         ["M a.lua", "D gone.md", "A new.lua", "M shared.lua"]
     );
 }
@@ -102,7 +128,7 @@ fn single_rev_compares_it_to_the_working_tree() {
     assert_eq!(range.right_label, "worktree");
     assert_eq!(range.describe(), "main → working tree");
     assert_eq!(
-        summary(&repo.changed_files(&range).unwrap()),
+        summary(&repo.scan(&range).unwrap().files),
         ["M a.lua", "D gone.md", "A new.lua", "? scratch.txt", "M shared.lua"]
     );
 }

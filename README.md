@@ -141,7 +141,7 @@ Everything lives in `<repo>/.structdiff/`, which the plugin adds to `.git/info/e
 
 Each range has its own file, so reviewing a branch and then going back to your uncommitted work never overwrites either narrative. The file is keyed by what you typed, so `main...HEAD` and `main...feature` get separate narratives even when they point at the same commits.
 
-The fingerprint is a sha256 of the range's diff, plus the contents of untracked files when comparing against the working tree. If the diff changes after the narrative was written, the sidebar shows **narrative stale**. The old narrative stays visible until you regenerate it.
+The fingerprint is a sha256 over each changed file's status, modes and content hashes (from `git diff --raw`, plus `git hash-object` for working-tree and untracked files), so it never builds the patch itself. Staging a change doesn't alter it; editing content does. If the diff changes after the narrative was written, the sidebar shows **narrative stale**. The old narrative stays visible until you regenerate it.
 
 Any tool can produce this file. The skill is just the default producer.
 

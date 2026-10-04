@@ -41,6 +41,9 @@ pub struct View {
     pub real_buf: Option<Buffer>,
     pub generating: bool,
     pub watcher: Option<TimerHandle>,
+    /// Bumped per background rescan; only the latest result is applied.
+    pub scan_gen: u64,
+    pub pending_scans: u32,
 }
 
 /// The first 8000 bytes of a file, enough to tell binary from text.
@@ -87,6 +90,8 @@ impl View {
             real_buf: None,
             generating: false,
             watcher: None,
+            scan_gen: 0,
+            pending_scans: 0,
         };
         view.split_windows()?;
         Ok(view)

@@ -128,3 +128,15 @@ pub fn virt_texts() -> Vec<String> {
     .unwrap()
 }
 
+
+/// `open`, then wait for the background load.
+pub fn open_wait(spec: Option<&str>) {
+    structdiff::open(spec.map(str::to_owned));
+    assert!(wait_until(5000, || !structdiff::busy()), "open timed out");
+}
+
+/// `refresh`, then wait for the background rescan.
+pub fn refresh_wait() {
+    structdiff::refresh();
+    assert!(wait_until(5000, || !structdiff::busy()), "refresh timed out");
+}

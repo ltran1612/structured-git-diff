@@ -143,38 +143,62 @@ impl Repo {
         args
     }
 
-    /// Changed files in `range`, sorted by path. Against the working tree this
-    /// includes staged, unstaged and untracked files.
-    pub fn changed_files(&self, range: &Range) -> Result<Vec<ChangedFile>, String> {
-        let out = run(&self.root, &Self::diff_args(range, &["--name-status", "-z", "-M", "--no-ext-diff"]))?;
-        let mut files = parse_name_status(&out);
-        if range.target.is_none() {
-            let untracked = run(&self.root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-            files.extend(untracked.split('\0').filter(|p| !p.is_empty()).map(|p| ChangedFile::new('?', p)));
-        }
-        files.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(files)
-    }
+    /// Changed files in `range` (sorted by path) and the change-set
+    /// fingerprint, from a single `git diff --raw` plus hashing of working-tree
+    /// files git didn't hash itself. Against the working tree this includes
+    /// staged, unstaged and untracked files.
+    pub fn scan(&self, range: &Range) -> Result<Scan, String> {
+        let raw = run_raw(&self.root, &Self::diff_args(range, &["--raw", "-z", "--abbrev=40", "-M", "--no-ext-diff"]), None)?;
+        let entries = parse_raw(&String::from_utf8_lossy(&raw));
+        let mut files: Vec<ChangedFile> = entries.iter().map(|e| e.file.clone()).collect();
 
-    /// sha256 of the range's diff plus the contents of untracked files. Any
-    /// change to the change set changes it.
-    pub fn fingerprint(&self, range: &Range, files: &[ChangedFile]) -> String {
-        let mut hasher = Sha256::new();
-        let diff = run_raw(&self.root, &Self::diff_args(range, &["--no-color", "--no-ext-diff", "--binary"]), None)
-            .unwrap_or_default();
-        hasher.update(&diff);
-        let untracked: Vec<&str> = files.iter().filter(|f| f.status == '?').map(|f| f.path.as_str()).collect();
-        if !untracked.is_empty() {
-            let input = untracked.join("\n") + "\n";
-            let hashes = run_raw(&self.root, &["hash-object", "--stdin-paths"], Some(input.as_bytes()))
-                .unwrap_or_default();
-            let hashes = String::from_utf8_lossy(&hashes);
-            for (path, hash) in untracked.iter().zip(hashes.lines().chain(std::iter::repeat(""))) {
-                hasher.update(b"\0");
-                hasher.update(format!("{path} {hash}").as_bytes());
+        // Paths whose content the fingerprint must cover but git didn't hash:
+        // working-tree files shown with an all-zero blob id, and untracked files.
+        let mut to_hash: Vec<String> = Vec::new();
+        if range.target.is_none() {
+            to_hash.extend(
+                entries.iter().filter(|e| e.dst_unknown() && e.file.status != 'D').map(|e| e.file.path.clone()),
+            );
+            let untracked = run(&self.root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+            for p in untracked.split('\0').filter(|p| !p.is_empty() && !is_internal(p)) {
+                files.push(ChangedFile::new('?', p));
+                to_hash.push(p.to_owned());
             }
         }
-        hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
+        files.retain(|f| !is_internal(&f.path));
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+
+        // Hash a normalized line per change, with every blob id resolved to
+        // the real content. Hashing git's raw output directly would make
+        // `git add` alone change the fingerprint (the right-hand id goes from
+        // all-zeros to the real id).
+        let mut resolved: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        if !to_hash.is_empty() {
+            let input = to_hash.join("\n") + "\n";
+            let hashes = run_raw(&self.root, &["hash-object", "--stdin-paths"], Some(input.as_bytes()))?;
+            resolved.extend(to_hash.iter().cloned().zip(String::from_utf8_lossy(&hashes).lines().map(str::to_owned)));
+        }
+        let mut lines: Vec<String> = entries
+            .iter()
+            .filter(|e| !is_internal(&e.file.path))
+            .map(|e| {
+                let dst = if e.dst_unknown() && e.file.status != 'D' {
+                    resolved.get(&e.file.path).cloned().unwrap_or_default()
+                } else {
+                    e.dst_sha.clone()
+                };
+                let old = e.file.old_path.as_deref().unwrap_or("");
+                format!("{} {} {} {} {} {} {}", e.src_mode, e.dst_mode, e.src_sha, dst, e.file.status, old, e.file.path)
+            })
+            .collect();
+        for f in files.iter().filter(|f| f.status == '?') {
+            lines.push(format!("? {} {}", resolved.get(&f.path).map_or("", String::as_str), f.path));
+        }
+        lines.sort();
+        let mut hasher = Sha256::new();
+        hasher.update(lines.join("\n").as_bytes());
+        let fingerprint = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        Ok(Scan { files, fingerprint })
     }
 
     /// File content at `rev`, or None when it doesn't exist there.
@@ -193,30 +217,66 @@ impl Repo {
     }
 }
 
-/// Parse `git diff --name-status -z` output.
-pub fn parse_name_status(out: &str) -> Vec<ChangedFile> {
+/// The result of [`Repo::scan`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scan {
+    pub files: Vec<ChangedFile>,
+    pub fingerprint: String,
+}
+
+/// structdiff's own scratch directory never counts as a change, even before
+/// it has been added to `.git/info/exclude`.
+fn is_internal(path: &str) -> bool {
+    path == ".structdiff" || path.starts_with(".structdiff/")
+}
+
+/// One entry of `git diff --raw -z --abbrev=40` output.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawEntry {
+    pub file: ChangedFile,
+    pub src_mode: String,
+    pub dst_mode: String,
+    pub src_sha: String,
+    /// Blob id of the right-hand side; all zeros when git didn't hash it (a
+    /// working-tree file that differs from the index).
+    pub dst_sha: String,
+}
+
+impl RawEntry {
+    fn dst_unknown(&self) -> bool {
+        self.dst_sha.bytes().all(|b| b == b'0')
+    }
+}
+
+/// Parse `git diff --raw -z --abbrev=40` output: for each change, a header
+/// `:<mode> <mode> <sha> <sha> <status>` then one path (two for renames and
+/// copies), all NUL-separated.
+pub fn parse_raw(out: &str) -> Vec<RawEntry> {
     let toks: Vec<&str> = out.split('\0').filter(|t| !t.is_empty()).collect();
-    let mut files = Vec::new();
+    let mut entries = Vec::new();
     let mut i = 0;
     while i < toks.len() {
-        let letter = toks[i].chars().next().unwrap_or('M');
-        if letter == 'R' || letter == 'C' {
-            if i + 2 >= toks.len() {
-                break;
-            }
-            files.push(ChangedFile {
-                status: letter,
-                old_path: Some(toks[i + 1].to_owned()),
-                path: toks[i + 2].to_owned(),
-            });
+        let header: Vec<&str> = toks[i].trim_start_matches(':').split(' ').collect();
+        let [src_mode, dst_mode, src_sha, dst_sha, code] = header[..] else { break };
+        let letter = code.chars().next().unwrap_or('M');
+        let file = if letter == 'R' || letter == 'C' {
+            let (Some(old), Some(new)) = (toks.get(i + 1), toks.get(i + 2)) else { break };
             i += 3;
+            ChangedFile { status: letter, old_path: Some((*old).to_owned()), path: (*new).to_owned() }
         } else {
             let Some(path) = toks.get(i + 1) else { break };
-            files.push(ChangedFile::new(if letter == 'T' { 'M' } else { letter }, path));
             i += 2;
-        }
+            ChangedFile::new(if letter == 'T' { 'M' } else { letter }, path)
+        };
+        entries.push(RawEntry {
+            file,
+            src_mode: src_mode.to_owned(),
+            dst_mode: dst_mode.to_owned(),
+            src_sha: src_sha.to_owned(),
+            dst_sha: dst_sha.to_owned(),
+        });
     }
-    files
+    entries
 }
 
 /// Split a range-ish command-line argument into the prefix to keep and the

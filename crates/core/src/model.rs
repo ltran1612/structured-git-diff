@@ -5,6 +5,7 @@ use crate::git::{ChangedFile, Range, Repo};
 use crate::group::{self, Compiled, Group, GroupDef};
 use crate::narrative::{self, Narrative, State};
 
+#[derive(Clone)]
 pub struct Model {
     pub repo: Repo,
     pub spec: String,
@@ -47,8 +48,9 @@ impl Model {
         if let Err(e) = narrative::ensure_excluded(&self.repo.exclude) {
             warnings.push(format!("cannot update {}: {e}", self.repo.exclude.display()));
         }
-        self.files = self.repo.changed_files(&self.range)?;
-        self.fingerprint = self.repo.fingerprint(&self.range, &self.files);
+        let scan = self.repo.scan(&self.range)?;
+        self.files = scan.files;
+        self.fingerprint = scan.fingerprint;
         warnings.extend(self.reload_narrative());
         if let Err(e) = narrative::export_groups(&self.repo.root, &self.range, &self.groups, &self.fingerprint) {
             warnings.push(format!("cannot write groups.json: {e}"));
