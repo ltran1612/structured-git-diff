@@ -20,6 +20,18 @@ pub fn dir(root: &Path) -> PathBuf {
     root.join(".structdiff")
 }
 
+/// The scratch directory, created if needed, for writing into. Refuses a
+/// `.structdiff` symlink, which a branch could commit to point writes
+/// outside the repo.
+fn writable_dir(root: &Path) -> std::io::Result<PathBuf> {
+    let d = dir(root);
+    if std::fs::symlink_metadata(&d).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(std::io::Error::other(format!("{} is a symlink; refusing to write through it", d.display())));
+    }
+    std::fs::create_dir_all(&d)?;
+    Ok(d)
+}
+
 /// `narrative.json` for the working tree, otherwise `narrative-<spec>.json`
 /// with every character outside `[A-Za-z0-9._-]` replaced by `_`.
 pub fn filename(spec: &str) -> String {
@@ -112,8 +124,7 @@ pub fn export_groups(
             .collect(),
         grouping,
     };
-    std::fs::create_dir_all(dir(root))?;
-    let path = dir(root).join("groups.json");
+    let path = writable_dir(root)?.join("groups.json");
     std::fs::write(&path, serde_json::to_vec(&export)?)?;
     Ok(path)
 }
@@ -192,7 +203,7 @@ impl Narrative {
     pub fn save(&self, repo: &Repo, spec: &str) -> Result<PathBuf> {
         let _ = ensure_excluded(&repo.exclude);
         let path = path(&repo.root, spec);
-        std::fs::create_dir_all(dir(&repo.root)).map_err(|source| Error::Io { path: dir(&repo.root), source })?;
+        writable_dir(&repo.root).map_err(|source| Error::Io { path: dir(&repo.root), source })?;
         std::fs::write(&path, self.to_json()).map_err(|source| Error::Io { path: path.clone(), source })?;
         Ok(path)
     }

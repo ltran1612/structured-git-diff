@@ -184,7 +184,6 @@ impl Repo {
                 to_hash.push(p.to_owned());
             }
         }
-        files.retain(|f| !is_internal(&f.path));
         files.sort_by(|a, b| a.path.cmp(&b.path));
 
         // Hash a normalized line per change, with every blob id resolved to
@@ -199,7 +198,6 @@ impl Repo {
             to_hash.iter().map(|p| (p.clone(), worktree_id(&self.root, p))).collect();
         let mut lines: Vec<String> = entries
             .iter()
-            .filter(|e| !is_internal(&e.file.path))
             .map(|e| {
                 let dst = if e.dst_unknown() && e.file.status != 'D' {
                     resolved.get(&e.file.path).cloned().unwrap_or_default()
@@ -249,9 +247,14 @@ impl Repo {
     /// Every file git tracks, plus untracked files that aren't ignored: the
     /// paths a grouping has to classify.
     pub fn all_files(&self) -> Result<Vec<String>> {
-        let out = run(&self.root, &["ls-files", "--cached", "--others", "--exclude-standard", "-z"])?;
-        let mut files: Vec<String> =
-            out.split('\0').filter(|p| !p.is_empty() && !is_internal(p)).map(str::to_owned).collect();
+        let tracked = run(&self.root, &["ls-files", "--cached", "-z"])?;
+        let untracked = run(&self.root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+        let mut files: Vec<String> = tracked
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .chain(untracked.split('\0').filter(|p| !p.is_empty() && !is_internal(p)))
+            .map(str::to_owned)
+            .collect();
         files.sort();
         files.dedup();
         Ok(files)
@@ -312,8 +315,10 @@ pub struct Scan {
     pub fingerprint: String,
 }
 
-/// structdiff's own scratch directory never counts as a change, even before
-/// it has been added to `.git/info/exclude`.
+/// Untracked files in structdiff's own scratch directory never count as a
+/// change, even before it has been added to `.git/info/exclude`. Anything
+/// the repo tracks or commits there is a real change like any other: hiding
+/// it would let a branch ship its own narrative unseen.
 fn is_internal(path: &str) -> bool {
     path == ".structdiff" || path.starts_with(".structdiff/")
 }

@@ -96,3 +96,31 @@ fn unknown_range_fails_to_load() {
 fn summary(files: &[structdiff_core::ChangedFile]) -> Vec<String> {
     files.iter().map(|f| format!("{} {}", f.status, f.path)).collect()
 }
+
+#[test]
+fn a_branch_cannot_hide_committed_structdiff_files_or_ship_a_fresh_narrative() {
+    let r = repo(&[("auth.py", "return token == SECRET\n")]);
+    git(&r.root, &["checkout", "-qb", "pr"]);
+    write(&r.root, "auth.py", "return True\n");
+    git(&r.root, &["commit", "-qam", "formatting"]);
+    // The author computes the fingerprint, then commits a narrative using it.
+    let fp = load(&r.root, "main...HEAD").fingerprint;
+    write(&r.root, ".structdiff/narrative-main...HEAD.json", &serde_json::json!({"fingerprint": fp, "overall": "formatting only"}).to_string());
+    write(&r.root, ".structdiff/other.sh", "evil\n");
+    git(&r.root, &["add", "-f", ".structdiff"]);
+    git(&r.root, &["commit", "-qm", "add narrative"]);
+    let m = load(&r.root, "main...HEAD");
+    assert_eq!(summary(&m.files), ["A .structdiff/narrative-main...HEAD.json", "A .structdiff/other.sh", "M auth.py"]);
+    assert_eq!(m.state, State::Stale, "a committed narrative must not look fresh");
+}
+
+#[test]
+fn structdiff_refuses_to_write_through_a_symlinked_scratch_dir() {
+    let r = repo(&[("a.lua", "a\n")]);
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), r.root.join(".structdiff")).unwrap();
+    write(&r.root, "a.lua", "b\n");
+    let m = load(&r.root, "");
+    assert!(m.export(&Grouping::default()).is_err());
+    assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none(), "wrote outside the repo");
+}
