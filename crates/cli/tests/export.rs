@@ -55,3 +55,30 @@ fn errors_and_usage() {
     assert_eq!(structdiff(dir.path(), &["bogus"]).status.code(), Some(2));
     assert!(structdiff(dir.path(), &["--help"]).status.success());
 }
+
+#[test]
+fn export_does_not_hang_on_thousands_of_untracked_files() {
+    let r = repo(&[("a.lua", "a\n")]);
+    for i in 0..5000 {
+        write(&r.root, &format!("generated/output/module_{i:05}/artifact.txt"), &format!("{i}\n"));
+    }
+    let mut child = Command::new(env!("CARGO_BIN_EXE_structdiff"))
+        .current_dir(&r.root)
+        .arg("export")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            child.kill().unwrap();
+            panic!("structdiff export hung on 5000 untracked files");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(status.success());
+}

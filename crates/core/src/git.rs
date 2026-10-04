@@ -61,11 +61,21 @@ fn run_raw(cwd: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(Error::GitUnavailable)?;
-    if let Some(input) = stdin {
+    // Feed stdin from another thread while this one reads stdout. Writing
+    // it all first deadlocks once git's output fills its pipe: git stops
+    // reading input until we read, and we never do (`hash-object
+    // --stdin-paths` with a few thousand paths did exactly that).
+    let writer = stdin.map(|input| {
         let mut pipe = child.stdin.take().expect("piped stdin");
-        pipe.write_all(input).map_err(Error::GitUnavailable)?;
-    }
+        let input = input.to_vec();
+        std::thread::spawn(move || pipe.write_all(&input))
+    });
     let out = child.wait_with_output().map_err(Error::GitUnavailable)?;
+    if let Some(writer) = writer {
+        // git may exit without reading all its input (e.g. on an error);
+        // its exit status says what went wrong, not the broken pipe.
+        let _ = writer.join();
+    }
     if out.status.success() {
         Ok(out.stdout)
     } else {
