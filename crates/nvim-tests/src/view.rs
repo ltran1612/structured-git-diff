@@ -4,7 +4,7 @@ use structdiff_core::{State, narrative};
 use crate::helpers::*;
 
 fn group_names() -> Vec<String> {
-    structdiff::with_view(|v| v.model.groups.iter().map(|g| g.name.clone()).collect()).unwrap()
+    structdiff::with_view(|v| v.model().groups.iter().map(|g| g.name.clone()).collect()).unwrap()
 }
 
 fn diff_on(win: &api::Window) -> bool {
@@ -23,7 +23,7 @@ fn view_groups_files_and_navigates_across_groups() {
     assert!(p.contains(&"▾ Source (2)".into()), "{p:?}");
     assert!(p.contains(&"  ? backoff.lua  lua".into()), "{p:?}");
     assert_eq!(current().as_deref(), Some("tests/core_spec.lua"));
-    let (left, right, sidebar) = structdiff::with_view(|v| (v.left.clone(), v.right.clone(), v.sidebar.clone())).unwrap();
+    let (left, right, sidebar) = structdiff::with_view(|v| (v.left().clone(), v.right().clone(), v.sidebar().clone())).unwrap();
     assert!(diff_on(&left) && diff_on(&right));
     assert!(name(&right).ends_with("/tests/core_spec.lua"));
 
@@ -54,7 +54,7 @@ fn narrative_feeds_reasons_order_split_and_staleness() {
     let r = sample_repo();
     start(&r.root);
     open_wait(None);
-    let fp = structdiff::with_view(|v| v.model.fingerprint.clone()).unwrap();
+    let fp = structdiff::with_view(|v| v.model().fingerprint.clone()).unwrap();
     std::fs::create_dir_all(narrative::dir(&r.root)).unwrap();
     std::fs::write(
         narrative::path(&r.root, ""),
@@ -68,7 +68,7 @@ fn narrative_feeds_reasons_order_split_and_staleness() {
     )
     .unwrap();
     structdiff::reload_narrative();
-    assert_eq!(structdiff::with_view(|v| v.model.state), Some(State::Fresh));
+    assert_eq!(structdiff::with_view(|v| v.model().state), Some(State::Fresh));
     assert_eq!(group_names(), ["Source", "Tests", "Docs"]);
     let virt = virt_texts();
     assert!(virt.contains(&"turns retry on".into()), "{virt:?}");
@@ -76,7 +76,7 @@ fn narrative_feeds_reasons_order_split_and_staleness() {
     assert_eq!(panel()[2], " narrative up to date");
 
     structdiff::toggle_narrative();
-    let (open, nlines) = structdiff::with_view(|v| (v.narrative_open(), lines(v.narrative_buf.as_ref().unwrap()))).unwrap();
+    let (open, nlines) = structdiff::with_view(|v| (v.narrative_open(), lines(v.narrative_buf().unwrap()))).unwrap();
     assert!(open);
     assert!(nlines.contains(&"Add retry.".into()), "{nlines:?}");
     structdiff::toggle_narrative();
@@ -84,7 +84,7 @@ fn narrative_feeds_reasons_order_split_and_staleness() {
 
     write(&r.root, "lua/util.lua", "return 3\n");
     refresh_wait();
-    assert_eq!(structdiff::with_view(|v| v.model.state), Some(State::Stale));
+    assert_eq!(structdiff::with_view(|v| v.model().state), Some(State::Stale));
     assert!(panel()[2].contains("stale"), "{}", panel()[2]);
     structdiff::close();
 }
@@ -94,10 +94,10 @@ fn watcher_reloads_when_the_narrative_file_is_written() {
     let r = sample_repo();
     start(&r.root);
     open_wait(None);
-    let fp = structdiff::with_view(|v| v.model.fingerprint.clone()).unwrap();
+    let fp = structdiff::with_view(|v| v.model().fingerprint.clone()).unwrap();
     std::fs::create_dir_all(narrative::dir(&r.root)).unwrap();
     std::fs::write(narrative::path(&r.root, ""), serde_json::json!({"fingerprint": fp, "overall": "x"}).to_string()).unwrap();
-    assert!(wait_until(3000, || structdiff::with_view(|v| v.model.state) == Some(State::Fresh)));
+    assert!(wait_until(3000, || structdiff::with_view(|v| v.model().state) == Some(State::Fresh)));
     structdiff::close();
 }
 
@@ -115,12 +115,12 @@ fn generate_runs_the_command_in_the_background_and_reloads() {
     structdiff::setup(opts);
     open_wait(None);
     structdiff::generate(None);
-    assert_eq!(structdiff::with_view(|v| v.generating), Some(true));
+    assert_eq!(structdiff::with_view(|v| v.generating()), Some(true));
     assert_eq!(panel()[2], " generating narrative…");
     assert!(wait_until(5000, || {
-        structdiff::with_view(|v| !v.generating).unwrap_or(false) && !structdiff::busy()
+        structdiff::with_view(|v| !v.generating()).unwrap_or(false) && !structdiff::busy()
     }));
-    let overall = structdiff::with_view(|v| v.model.narrative.as_ref().map(|n| n.overall.clone())).flatten();
+    let overall = structdiff::with_view(|v| v.model().narrative.as_ref().map(|n| n.overall.clone())).flatten();
     assert_eq!(overall.as_deref(), Some("generated for []"));
     assert_eq!(structdiff::with_view(|v| v.narrative_open()), Some(true));
     // generating is what exports groups.json for the skill
@@ -134,10 +134,10 @@ fn branch_range_uses_read_only_revisions_and_its_own_narrative() {
     start(&r.root);
     open_wait(Some("main...HEAD"));
     assert_eq!(panel()[1], " main...HEAD");
-    let flat: Vec<String> = structdiff::with_view(|v| v.flat().iter().map(|&p| v.model.file(p).path.clone()).collect()).unwrap();
+    let flat: Vec<String> = structdiff::with_view(|v| v.flat().iter().map(|&p| v.model().file(p).path.clone()).collect()).unwrap();
     assert_eq!(flat, ["gone.md", "a.lua", "new.lua"]);
     structdiff::goto_file(1);
-    let (left, right, real) = structdiff::with_view(|v| (v.left.clone(), v.right.clone(), v.real_buf.is_some())).unwrap();
+    let (left, right, real) = structdiff::with_view(|v| (v.left().clone(), v.right().clone(), v.real_buf().is_some())).unwrap();
     assert_eq!(name(&right), "structdiff://HEAD/a.lua");
     assert_eq!(win_lines(&right), ["a feature"]); // committed, not the worktree edit
     assert_eq!(name(&left), "structdiff://merge-base(main)/a.lua");
@@ -163,7 +163,7 @@ fn close_removes_the_tab_and_real_buffer_keymaps() {
     open_wait(None);
     assert_eq!(structdiff::ui::tab_count(), tabs + 1);
     structdiff::goto_group(2); // lua/backoff.lua, a real buffer
-    let buf = structdiff::with_view(|v| v.real_buf.clone()).flatten().expect("real buffer");
+    let buf = structdiff::with_view(|v| v.real_buf().cloned()).flatten().expect("real buffer");
     let ours = |b: &api::Buffer| {
         b.get_keymap(api::types::Mode::Normal)
             .unwrap()
@@ -182,10 +182,10 @@ fn layout_is_rebuilt_when_a_diff_window_is_closed() {
     let r = sample_repo();
     start(&r.root);
     open_wait(None);
-    let left = structdiff::with_view(|v| v.left.clone()).unwrap();
+    let left = structdiff::with_view(|v| v.left().clone()).unwrap();
     left.close(true).unwrap();
     structdiff::goto_file(1);
-    let (left, sidebar) = structdiff::with_view(|v| (v.left.clone(), v.sidebar.clone())).unwrap();
+    let (left, sidebar) = structdiff::with_view(|v| (v.left().clone(), v.sidebar().clone())).unwrap();
     assert!(left.is_valid() && sidebar.is_valid());
     assert!(diff_on(&left));
     structdiff::close();
@@ -262,7 +262,7 @@ fn overlapping_refreshes_apply_only_the_latest() {
     structdiff::refresh();
     structdiff::refresh();
     assert!(wait_until(5000, || !structdiff::busy()));
-    assert_eq!(structdiff::with_view(|v| v.model.file_count()), Some(5));
+    assert_eq!(structdiff::with_view(|v| v.model().file_count()), Some(5));
     structdiff::close();
 }
 
@@ -288,4 +288,26 @@ fn viewing_writes_nothing_to_the_repo() {
     structdiff::close();
     assert!(!r.root.join(".structdiff").exists());
     assert_eq!(std::fs::read_to_string(r.root.join(".git/info/exclude")).unwrap_or_default(), exclude);
+}
+
+#[nvim_oxi::test]
+fn toggling_reasons_updates_the_one_config_the_view_renders_from() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    let fp = structdiff::with_view(|v| v.model().fingerprint.clone()).unwrap();
+    std::fs::create_dir_all(narrative::dir(&r.root)).unwrap();
+    std::fs::write(
+        narrative::path(&r.root, ""),
+        serde_json::json!({"fingerprint": fp, "files": {"lua/core.lua": "turns retry on"}}).to_string(),
+    )
+    .unwrap();
+    structdiff::reload_narrative();
+    assert!(virt_texts().contains(&"turns retry on".into()));
+    structdiff::toggle_reasons();
+    assert!(!structdiff::config().show_reasons);
+    assert!(virt_texts().is_empty(), "{:?}", virt_texts());
+    structdiff::toggle_reasons();
+    assert!(virt_texts().contains(&"turns retry on".into()));
+    structdiff::close();
 }

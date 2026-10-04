@@ -90,11 +90,11 @@ pub fn name(win: &Window) -> String {
 }
 
 pub fn panel() -> Vec<String> {
-    structdiff::with_view(|v| lines(&v.panel_buf)).expect("view open")
+    structdiff::with_view(|v| lines(v.panel_buf())).expect("view open")
 }
 
 pub fn current() -> Option<String> {
-    structdiff::with_view(|v| v.current.clone()).flatten()
+    structdiff::with_view(|v| v.current().map(str::to_owned)).flatten()
 }
 
 /// Let Neovim run its event loop (timers, scheduled callbacks) until `done`.
@@ -117,7 +117,7 @@ pub fn virt_texts() -> Vec<String> {
     structdiff::with_view(|v| {
         let ns = api::create_namespace("structdiff");
         let opts = GetExtmarksOpts::builder().details(true).build();
-        v.panel_buf
+        v.panel_buf()
             .get_extmarks(ns, ExtmarkPosition::ByTuple((0, 0)), ExtmarkPosition::ByTuple((usize::MAX >> 33, 0)), &opts)
             .unwrap()
             .flat_map(|(_, _, _, details)| {

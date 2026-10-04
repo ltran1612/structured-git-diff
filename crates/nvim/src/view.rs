@@ -1,5 +1,9 @@
 //! The open view: one tab with | sidebar | base | target |, plus an optional
 //! narrative split along the bottom.
+//!
+//! This layer only draws. It owns no config (callers pass `&Config`) and
+//! installs no keymaps: [`View::show`] and [`View::open_narrative`] return
+//! the buffers that need keys, and the controller (`actions`) maps them.
 
 use std::collections::HashSet;
 
@@ -9,7 +13,7 @@ use structdiff_core::narrative::{self, State};
 use structdiff_core::{ChangedFile, Model};
 
 use crate::config::Config;
-use crate::ui;
+use crate::{hl, ui};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
@@ -26,24 +30,33 @@ enum Mark {
 }
 
 pub struct View {
-    pub model: Model,
-    pub cfg: Config,
-    pub current: Option<String>,
-    pub collapsed: HashSet<String>,
-    pub tab: TabPage,
-    pub sidebar: Window,
-    pub left: Window,
-    pub right: Window,
-    pub narrative_win: Option<Window>,
-    pub panel_buf: Buffer,
-    pub narrative_buf: Option<Buffer>,
-    pub line_items: Vec<Item>,
-    pub real_buf: Option<Buffer>,
-    pub generating: bool,
-    pub watcher: Option<TimerHandle>,
+    model: Model,
+    current: Option<String>,
+    collapsed: HashSet<String>,
+    tab: TabPage,
+    sidebar: Window,
+    left: Window,
+    right: Window,
+    narrative_win: Option<Window>,
+    panel_buf: Buffer,
+    narrative_buf: Option<Buffer>,
+    line_items: Vec<Item>,
+    /// The working-tree file shown on the right, which carries navigation
+    /// keys only while it is shown.
+    real_buf: Option<Buffer>,
+    generating: bool,
+    watcher: Option<TimerHandle>,
     /// Bumped per background rescan; only the latest result is applied.
-    pub scan_gen: u64,
-    pub pending_scans: u32,
+    scan_gen: u64,
+    pending_scans: u32,
+}
+
+/// The buffers [`View::show`] put in the diff panes.
+pub struct Shown {
+    pub left: Buffer,
+    pub right: Buffer,
+    /// The right side is the real working-tree file (not a scratch buffer).
+    pub right_is_real: bool,
 }
 
 /// The first 8000 bytes of a file, enough to tell binary from text.
@@ -64,7 +77,7 @@ fn status_hl(status: char) -> &'static str {
 
 impl View {
     /// Open a new tab for `model`. The caller shows the first file.
-    pub fn new(model: Model, cfg: Config) -> Result<Self, api::Error> {
+    pub fn new(model: Model, cfg: &Config) -> Result<Self, api::Error> {
         api::command("tabnew")?;
         let tab = api::get_current_tabpage();
         ui::buf_opt(&api::get_current_buf(), "bufhidden", "wipe");
@@ -76,7 +89,6 @@ impl View {
         let current = Window::current();
         let mut view = Self {
             model,
-            cfg,
             current: None,
             collapsed: HashSet::new(),
             tab,
@@ -93,11 +105,97 @@ impl View {
             scan_gen: 0,
             pending_scans: 0,
         };
-        view.split_windows()?;
+        view.split_windows(cfg)?;
         Ok(view)
     }
 
-    fn split_windows(&mut self) -> Result<(), api::Error> {
+    // Accessors ------------------------------------------------------------
+
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    pub fn set_model(&mut self, model: Model) {
+        self.model = model;
+    }
+
+    pub fn model_mut(&mut self) -> &mut Model {
+        &mut self.model
+    }
+
+    pub fn tab(&self) -> &TabPage {
+        &self.tab
+    }
+
+    pub fn sidebar(&self) -> &Window {
+        &self.sidebar
+    }
+
+    pub fn left(&self) -> &Window {
+        &self.left
+    }
+
+    pub fn right(&self) -> &Window {
+        &self.right
+    }
+
+    pub fn panel_buf(&self) -> &Buffer {
+        &self.panel_buf
+    }
+
+    pub fn panel_buf_mut(&mut self) -> &mut Buffer {
+        &mut self.panel_buf
+    }
+
+    pub fn narrative_buf(&self) -> Option<&Buffer> {
+        self.narrative_buf.as_ref()
+    }
+
+    pub fn current(&self) -> Option<&str> {
+        self.current.as_deref()
+    }
+
+    pub fn real_buf(&self) -> Option<&Buffer> {
+        self.real_buf.as_ref()
+    }
+
+    /// Hand over the real file buffer so its keys can be removed.
+    pub fn take_real_buf(&mut self) -> Option<Buffer> {
+        self.real_buf.take()
+    }
+
+    pub fn generating(&self) -> bool {
+        self.generating
+    }
+
+    pub fn set_generating(&mut self, on: bool) {
+        self.generating = on;
+    }
+
+    pub fn set_watcher(&mut self, watcher: Option<TimerHandle>) {
+        self.watcher = watcher;
+    }
+
+    /// Start a background rescan; returns its generation.
+    pub fn begin_scan(&mut self) -> u64 {
+        self.scan_gen += 1;
+        self.pending_scans += 1;
+        self.scan_gen
+    }
+
+    /// Finish a rescan; true when it is the latest one (apply its result).
+    pub fn finish_scan(&mut self, generation: u64) -> bool {
+        self.pending_scans = self.pending_scans.saturating_sub(1);
+        self.scan_gen == generation
+    }
+
+    pub fn scanning(&self) -> bool {
+        self.pending_scans > 0
+    }
+
+    // Layout ---------------------------------------------------------------
+
+    fn split_windows(&mut self, cfg: &Config) -> Result<(), api::Error> {
         self.right = Window::current();
         api::command("leftabove vsplit")?;
         self.left = Window::current();
@@ -113,18 +211,18 @@ impl View {
         ui::win_opt(&self.sidebar, "signcolumn", "no");
         ui::win_opt(&self.sidebar, "foldcolumn", "0");
         ui::win_opt(&self.sidebar, "statuscolumn", "");
-        self.sidebar.set_width(self.cfg.sidebar_width)?;
+        self.sidebar.set_width(cfg.sidebar_width)?;
         api::command("wincmd =")
     }
 
     /// Rebuild the windows if the user closed some of them.
-    pub fn ensure_layout(&mut self) -> Result<(), api::Error> {
+    fn ensure_layout(&mut self, cfg: &Config) -> Result<(), api::Error> {
         if [&self.sidebar, &self.left, &self.right].iter().all(|w| ui::same_tab(w, &self.tab)) {
             return Ok(());
         }
         api::set_current_tabpage(&self.tab)?;
         let _ = api::command("silent! only");
-        self.split_windows()
+        self.split_windows(cfg)
     }
 
     pub fn flat(&self) -> Vec<(usize, usize)> {
@@ -193,55 +291,41 @@ impl View {
         }
     }
 
-    /// Show the idx-th file of the display order.
-    pub fn show(&mut self, idx: usize) -> Result<(), api::Error> {
+    /// Show the idx-th file of the display order. The caller must have taken
+    /// the previous real buffer ([`View::take_real_buf`]) to unmap it.
+    pub fn show(&mut self, idx: usize, cfg: &Config) -> Result<Option<Shown>, api::Error> {
         let flat = self.flat();
-        let Some(&pos) = flat.get(idx) else { return Ok(()) };
+        let Some(&pos) = flat.get(idx) else { return Ok(None) };
         let file = self.model.file(pos).clone();
         self.current = Some(file.path.clone());
         self.collapsed.remove(&self.model.groups[pos.0].name);
-        self.ensure_layout()?;
+        self.ensure_layout(cfg)?;
 
-        self.unmap_real();
-        let (mut right, real) = self.show_diff(&file)?;
-        if real {
-            crate::keys::map_nav(&mut right, &self.cfg);
-            self.real_buf = Some(right);
-        } else {
-            crate::keys::map_view(&mut right, &self.cfg);
+        let (right, right_is_real) = self.show_diff(&file)?;
+        if right_is_real {
+            self.real_buf = Some(right.clone());
         }
-        let mut left = self.left.get_buf()?;
-        crate::keys::map_view(&mut left, &self.cfg);
-        self.redraw();
-        Ok(())
-    }
-
-    /// Real files only carry navigation keys while shown, so q / R / gn keep
-    /// their normal meaning when editing.
-    pub fn unmap_real(&mut self) {
-        if let Some(mut buf) = self.real_buf.take()
-            && buf.is_valid()
-        {
-            crate::keys::unmap_nav(&mut buf, &self.cfg);
-        }
+        let left = self.left.get_buf()?;
+        self.redraw(cfg);
+        Ok(Some(Shown { left, right, right_is_real }))
     }
 
     // Sidebar --------------------------------------------------------------
 
-    pub fn redraw(&mut self) {
-        crate::set_highlights();
-        self.render_panel();
+    pub fn redraw(&mut self, cfg: &Config) {
+        hl::apply();
+        self.render_panel(cfg);
         self.focus_current();
         self.render_narrative();
     }
 
-    fn render_panel(&mut self) {
+    fn render_panel(&mut self, cfg: &Config) {
         let width = if self.sidebar.is_valid() {
-            self.sidebar.get_width().unwrap_or(self.cfg.sidebar_width)
+            self.sidebar.get_width().unwrap_or(cfg.sidebar_width)
         } else {
-            self.cfg.sidebar_width
+            cfg.sidebar_width
         } as usize;
-        let reasons = if self.cfg.show_reasons { self.model.narrative.as_ref() } else { None };
+        let reasons = if cfg.show_reasons { self.model.narrative.as_ref() } else { None };
         let mut lines: Vec<String> = Vec::new();
         let mut items = Vec::new();
         let mut marks = Vec::new();
@@ -350,12 +434,12 @@ impl View {
         }
     }
 
-    pub fn toggle_fold(&mut self, gi: usize) {
+    pub fn toggle_fold(&mut self, gi: usize, cfg: &Config) {
         let name = self.model.groups[gi].name.clone();
         if !self.collapsed.remove(&name) {
             self.collapsed.insert(name);
         }
-        self.render_panel();
+        self.render_panel(cfg);
         if let Some(row) = self.line_items.iter().position(|it| *it == Item::Group(gi)) {
             let _ = self.sidebar.set_cursor(row + 1, 0);
         }
@@ -373,20 +457,23 @@ impl View {
         self.narrative_win.as_ref().is_some_and(|w| ui::same_tab(w, &self.tab))
     }
 
-    pub fn open_narrative(&mut self) -> Result<(), api::Error> {
+    /// Open the narrative split. Returns the narrative buffer when it was just
+    /// created (and so needs keymaps).
+    pub fn open_narrative(&mut self, cfg: &Config) -> Result<Option<Buffer>, api::Error> {
         if self.narrative_open() {
-            return Ok(());
+            return Ok(None);
         }
+        let mut created = None;
         if !self.narrative_buf.as_ref().is_some_and(Buffer::is_valid) {
             let mut buf = api::create_buf(false, true)?;
             buf.set_name("structdiff://narrative")?;
             ui::buf_opt(&buf, "bufhidden", "hide");
             ui::buf_opt(&buf, "filetype", "markdown");
-            crate::keys::map_narrative(&mut buf, &self.cfg);
+            created = Some(buf.clone());
             self.narrative_buf = Some(buf);
         }
         self.render_narrative();
-        let cmd = format!("botright {}split", self.cfg.narrative_height);
+        let cmd = format!("botright {}split", cfg.narrative_height);
         let mut win = self.right.call::<_, _, Window>(move |_| {
             api::command(&cmd)?;
             Ok::<_, api::Error>(Window::current())
@@ -397,24 +484,25 @@ impl View {
         ui::win_opt(&win, "winfixheight", true);
         ui::win_opt(&win, "conceallevel", 2i64);
         self.narrative_win = Some(win);
-        Ok(())
+        Ok(created)
     }
 
-    pub fn toggle_narrative(&mut self) -> Result<(), api::Error> {
+    /// Close the split if open, else open it (see [`View::open_narrative`]).
+    pub fn toggle_narrative(&mut self, cfg: &Config) -> Result<Option<Buffer>, api::Error> {
         match self.narrative_win.take() {
-            Some(win) if ui::same_tab(&win, &self.tab) => win.close(true),
-            _ => self.open_narrative(),
+            Some(win) if ui::same_tab(&win, &self.tab) => win.close(true).map(|()| None),
+            _ => self.open_narrative(cfg),
         }
     }
 
     // Lifecycle ------------------------------------------------------------
 
-    /// Free everything except the tab itself.
+    /// Free everything except the tab itself. The caller must have taken
+    /// the real buffer ([`View::take_real_buf`]) to unmap it.
     pub fn cleanup(mut self) {
         if let Some(mut t) = self.watcher.take() {
             let _ = t.stop();
         }
-        self.unmap_real();
         for buf in [Some(self.panel_buf.clone()), self.narrative_buf.take()].into_iter().flatten() {
             if buf.is_valid() {
                 let _ = buf.delete(&api::opts::BufDeleteOpts::builder().force(true).build());

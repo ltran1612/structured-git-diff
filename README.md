@@ -186,6 +186,8 @@ Highlight groups (all `default` links, so you can override them): `StructDiffTit
 | `crates/nvim` (`structdiff`) | The plugin: a `cdylib` loaded by Neovim. Git work runs on background threads; Neovim's main loop only draws. |
 | `crates/nvim-tests` | Tests that run inside a real Neovim through nvim-oxi's test harness. |
 
+Inside `crates/nvim`, dependencies only point down: `register` (version guard, commands, module table) → `actions` / `generate` / `watch` (the controller and keymap wiring) → `keys` → `view` (draws only; takes the config as an argument and owns none) → the leaves `state`, `config`, `hl`, `ui`, `bg`.
+
 `plugin/structdiff.lua` is a single `require("structdiff")`. Neovim can only load native modules through `require`, so that line is the whole Lua side.
 
 ## Tests
@@ -208,7 +210,7 @@ nvim-oxi is pinned to an upstream commit with the `neovim-0-12` feature, which p
 
 Two guards keep this from happening again:
 
-- **Exact version allowlist.** `TESTED_NEOVIM` in `crates/nvim/src/lib.rs` lists the exact versions checked (currently 0.12.5). These bindings broke within the 0.12 series, so a newer 0.12.x is rejected too. On any other version the plugin shows an error and does nothing. If you accept the risk, set `vim.g.structdiff_allow_untested_nvim = true` before it loads.
+- **Exact version allowlist.** `TESTED_NEOVIM` in `crates/nvim/src/register.rs` lists the exact versions checked (currently 0.12.5). These bindings broke within the 0.12 series, so a newer 0.12.x is rejected too. On any other version the plugin shows an error and does nothing. If you accept the risk, set `vim.g.structdiff_allow_untested_nvim = true` before it loads.
 - **Compile-time ban.** `clippy.toml` lists the three bindings as `disallowed-methods`, and the plugin crate denies that lint, so `./check.sh` fails if anyone calls them.
 
 The details are in the doc comment at the top of `crates/nvim/src/lib.rs`. Before supporting a new Neovim or nvim-oxi version, re-check every binding the plugin uses against that version's sources, then add it to `TESTED_NEOVIM`.
