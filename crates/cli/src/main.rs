@@ -5,7 +5,7 @@
 
 use std::process::ExitCode;
 
-use structdiff_core::group::{self, Compiled};
+use structdiff_core::group;
 use structdiff_core::{ChangedFile, Error, Grouping, Model, Repo, narrative};
 
 const USAGE: &str = "\
@@ -92,12 +92,10 @@ fn groups(config: Option<&str>, all: bool) -> Result<bool, Error> {
         }
     };
 
-    let (compiled, invalid) = Compiled::new(&grouping.groups);
+    let files: Vec<ChangedFile> = repo.all_files()?.iter().map(|p| ChangedFile::new('M', p)).collect();
+    let (grouped, invalid) = group::arrange(&files, &grouping);
     problems.extend(invalid);
     problems.extend(grouping.problems());
-    let files: Vec<ChangedFile> = repo.all_files()?.iter().map(|p| ChangedFile::new('M', p)).collect();
-    let mut grouped = group::assign(&files, &compiled, &grouping.other);
-    group::sort_display(&mut grouped, &grouping.display, &grouping.other);
     let empty: Vec<&str> = grouping
         .groups
         .iter()

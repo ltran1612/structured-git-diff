@@ -201,6 +201,15 @@ pub fn sort_display(groups: &mut [Group], display: &[String], other: &str) {
     groups.sort_by_key(|g| rank(&g.name)); // stable: unlisted keep match order
 }
 
+/// Group `files` with `grouping` and put the groups in display order.
+/// Returns the groups and any invalid-pattern warnings.
+pub fn arrange(files: &[ChangedFile], grouping: &Grouping) -> (Vec<Group>, Vec<String>) {
+    let (compiled, invalid) = Compiled::new(&grouping.groups);
+    let mut groups = assign(files, &compiled, &grouping.other);
+    sort_display(&mut groups, &grouping.display, &grouping.other);
+    (groups, invalid)
+}
+
 /// Stable-sort each group's files by their position in `order` (unlisted
 /// files keep their relative order after the listed ones), then sort the
 /// groups by their earliest file so the story's root cause comes first.

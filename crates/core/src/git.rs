@@ -173,8 +173,7 @@ impl Repo {
 
         let mut untracked: Vec<String> = Vec::new();
         if range.target.is_none() {
-            let out = run(&self.root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-            untracked = out.split('\0').filter(|p| !p.is_empty() && !is_internal(p)).map(str::to_owned).collect();
+            untracked = self.untracked()?;
             // After `git rm --cached f`, git reports f as deleted while it is
             // still in the working tree (as untracked). Against HEAD that's
             // one modification, not a deletion plus a new file.
@@ -270,17 +269,19 @@ impl Repo {
         run_raw(&self.root, &["show", &format!("{rev}:{path}")], None).ok()
     }
 
+    /// Untracked files git doesn't ignore, minus structdiff's own scratch
+    /// files.
+    fn untracked(&self) -> Result<Vec<String>> {
+        let out = run(&self.root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+        Ok(out.split('\0').filter(|p| !p.is_empty() && !is_internal(p)).map(str::to_owned).collect())
+    }
+
     /// Every file git tracks, plus untracked files that aren't ignored: the
     /// paths a grouping has to classify.
     pub fn all_files(&self) -> Result<Vec<String>> {
         let tracked = run(&self.root, &["ls-files", "--cached", "-z"])?;
-        let untracked = run(&self.root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-        let mut files: Vec<String> = tracked
-            .split('\0')
-            .filter(|p| !p.is_empty())
-            .chain(untracked.split('\0').filter(|p| !p.is_empty() && !is_internal(p)))
-            .map(str::to_owned)
-            .collect();
+        let mut files: Vec<String> = tracked.split('\0').filter(|p| !p.is_empty()).map(str::to_owned).collect();
+        files.extend(self.untracked()?);
         files.sort();
         files.dedup();
         Ok(files)

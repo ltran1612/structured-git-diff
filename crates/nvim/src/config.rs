@@ -3,7 +3,6 @@
 use nvim_oxi::Object;
 use serde::Deserialize;
 use structdiff_core::{GroupDef, Generator, Grouping, generator, narrative};
-use structdiff_core::group::{default_display_order, default_groups};
 
 /// One key or several: `"]g"` or `{ "za", "<Tab>" }`.
 #[derive(Clone, Debug, Deserialize)]
@@ -85,10 +84,11 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let Grouping { groups, other, display } = Grouping::default();
         Self {
-            groups: default_groups(),
-            other_group: "Other".into(),
-            display_order: default_display_order(),
+            groups,
+            other_group: other,
+            display_order: display,
             sidebar_width: 40,
             narrative_height: 15,
             show_reasons: true,

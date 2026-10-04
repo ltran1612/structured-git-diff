@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::error::{Error, Result};
 use crate::git::{ChangedFile, Range, Repo};
-use crate::group::{self, Compiled, Group, Grouping};
+use crate::group::{self, Group, Grouping};
 use crate::narrative::{self, Narrative, State};
 
 #[derive(Clone)]
@@ -70,10 +70,9 @@ impl Model {
         self.state = narrative::state(self.narrative.as_ref(), &self.fingerprint);
         let (grouping, warning) = grouping.for_repo(&self.repo.root);
         warnings.extend(warning);
-        let (compiled, bad) = Compiled::new(&grouping.groups);
+        let (groups, bad) = group::arrange(&self.files, &grouping);
         warnings.extend(bad);
-        self.groups = group::assign(&self.files, &compiled, &grouping.other);
-        group::sort_display(&mut self.groups, &grouping.display, &grouping.other);
+        self.groups = groups;
         if let Some(n) = &self.narrative {
             group::sort_by_order(&mut self.groups, &n.order);
         }
