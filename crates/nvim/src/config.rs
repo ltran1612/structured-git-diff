@@ -2,7 +2,7 @@
 
 use nvim_oxi::Object;
 use serde::Deserialize;
-use structdiff_core::{GroupDef, Grouping};
+use structdiff_core::{GroupDef, Generator, Grouping, generator, narrative};
 use structdiff_core::group::{default_display_order, default_groups};
 
 /// One key or several: `"]g"` or `{ "za", "<Tab>" }`.
@@ -72,8 +72,13 @@ pub struct Config {
     /// Seconds before :StructDiffGenerate gives up and stops the command;
     /// 0 waits forever.
     pub generate_timeout: u64,
-    /// Run by :StructDiffGenerate from the repo root. "{range}" becomes the
-    /// range spec ("" for the working tree).
+    /// Agent CLI that :StructDiffGenerate runs when no narrative was written
+    /// by the agent that made the change: "claude", "codex" or "copilot".
+    pub generator: Generator,
+    /// Full override of the generator's command. Run from the repo root;
+    /// "{prompt}" becomes the narrative instructions, "{range}" the range
+    /// spec ("" for the working tree), "{output}" the narrative file's path
+    /// relative to the root. Empty means use `generator`'s command.
     pub generate_cmd: Vec<String>,
     pub keymaps: Keymaps,
 }
@@ -88,20 +93,8 @@ impl Default for Config {
             narrative_height: 15,
             show_reasons: true,
             generate_timeout: 600,
-            generate_cmd: [
-                "claude",
-                "-p",
-                "/diff-narrative {range}",
-                "--permission-mode",
-                "acceptEdits",
-                "--allowedTools",
-                "Bash(git:*)",
-                "Bash(structdiff export:*)",
-                "Read",
-                "Write",
-            ]
-            .map(String::from)
-            .to_vec(),
+            generator: Generator::default(),
+            generate_cmd: Vec::new(),
             keymaps: Keymaps::default(),
         }
     }
@@ -127,11 +120,11 @@ impl Config {
         Grouping { groups: self.groups.clone(), other: self.other_group.clone(), display: self.display_order.clone() }
     }
 
-    /// generate_cmd with "{range}" replaced by `spec`.
+    /// The command to run for `spec`: `generate_cmd` if set, otherwise the
+    /// `generator`'s, with placeholders filled in.
     pub fn generate_cmd_for(&self, spec: &str) -> Vec<String> {
-        self.generate_cmd
-            .iter()
-            .map(|a| if a.contains("{range}") { a.replace("{range}", spec).trim().to_owned() } else { a.clone() })
-            .collect()
+        let template = if self.generate_cmd.is_empty() { self.generator.template() } else { self.generate_cmd.clone() };
+        let output = format!(".structdiff/{}", narrative::filename(spec));
+        generator::expand(&template, spec, &output)
     }
 }

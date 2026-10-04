@@ -471,3 +471,23 @@ fn background_jobs_are_all_handled() {
     assert_eq!(structdiff::background_jobs(), 0);
     structdiff::close();
 }
+
+#[nvim_oxi::test]
+fn generator_is_chosen_from_setup() {
+    let lua = |expr: &str| api::call_function::<_, nvim_oxi::Object>("luaeval", (expr,)).unwrap();
+    assert_eq!(structdiff::config().generate_cmd_for("")[0], "claude"); // default
+    structdiff::setup(lua("{ generator = 'codex' }"));
+    let cmd = structdiff::config().generate_cmd_for("main...");
+    assert_eq!(&cmd[..2], ["codex", "exec"]);
+    assert!(cmd.last().unwrap().contains("Range argument: `main...`"));
+    structdiff::setup(lua("{ generator = 'copilot' }"));
+    assert!(structdiff::config().generate_cmd_for("").last().unwrap().ends_with("write(.structdiff/narrative.json)"));
+    // generate_cmd overrides the generator entirely
+    structdiff::setup(lua("{ generator = 'codex', generate_cmd = { 'my-agent', '{range}' } }"));
+    assert_eq!(structdiff::config().generate_cmd_for("main.."), ["my-agent", "main.."]);
+    // an unknown generator is reported and leaves the config alone
+    capture_notifications();
+    structdiff::setup(lua("{ generator = 'gpt' }"));
+    assert_eq!(structdiff::config().generate_cmd_for("main..")[0], "my-agent");
+    assert!(notifications().iter().any(|m| m.contains("invalid setup options")), "{:?}", notifications());
+}

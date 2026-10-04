@@ -21,7 +21,7 @@ A grouped view of your working-tree diff for Neovim, with an AI-written narrativ
 
 - **Grouping:** changed files are grouped by regex path patterns. By default you see your uncommitted work (staged, unstaged and untracked, all against HEAD). You can also review a branch: `:StructDiff main...HEAD`.
 - **Navigation:** move between groups and files. Each file opens as a native side-by-side `:diffthis` against HEAD. The right-hand side is the real file, so you can edit it.
-- **Narrative:** the `diff-narrative` Claude Code skill writes `.structdiff/narrative.json`, and the view shows it:
+- **Narrative:** the agent that made the changes writes `.structdiff/narrative.json` (with the `diff-narrative` skill), and the view shows it:
   - an overall story,
   - a "why" for each group,
   - a one-line reason for each file,
@@ -66,7 +66,7 @@ ln -s ~/.local/share/nvim/lazy/structdiff.nvim/skill/diff-narrative ~/.claude/sk
 | Command | |
 |---|---|
 | `:StructDiff [range]` | Open the view (or refresh it if it's already open with the same range) |
-| `:StructDiffGenerate [range]` | Run the skill through `claude -p` for that range, and reload when it finishes |
+| `:StructDiffGenerate [range]` | Fallback: have an agent CLI (Claude, Codex or Copilot) write the narrative for that range, and reload when it finishes |
 | `:StructDiffCancel` | Stop a running `:StructDiffGenerate` |
 | `:StructDiffNarrative` | Toggle the narrative split |
 | `:StructDiffRefresh` | Re-scan git and reload the narrative |
@@ -85,7 +85,21 @@ ln -s ~/.local/share/nvim/lazy/structdiff.nvim/skill/diff-narrative ~/.claude/sk
 
 The real file on the right only gets the `]g [g ]f [f` keys, and only while it's shown in the view. `q`, `R` and `gn` keep their normal meaning when you edit there.
 
-You can also run `/diff-narrative [range]` in any Claude Code session in the repo. The open view checks the narrative file every 300ms and reloads as soon as it changes.
+## Where narratives come from
+
+The viewer only reads `.structdiff/narrative*.json`; it never talks to an AI itself. The open view checks the file every 300ms and reloads as soon as it changes.
+
+**Best: the agent that made the changes writes it.** When an agent finishes a change, it runs `/diff-narrative [range]` (the skill in `skill/diff-narrative`). That agent knows the request, the decisions and the alternatives it rejected, which no one reading the diff later can recover.
+
+**Fallback: `:StructDiffGenerate`** is for changes nobody narrated, such as your own edits, someone else's branch, or a session that's gone. It starts a fresh agent that reconstructs the "why" from the diff, the commit messages and the surrounding code. Pick the agent CLI with `generator`:
+
+| `generator` | Runs | Permissions granted |
+|---|---|---|
+| `"claude"` (default) | `claude -p` | git, `structdiff export`, reading, writing files |
+| `"codex"` | `codex exec --sandbox workspace-write --ephemeral` | Codex's sandbox: writes only inside the repo |
+| `"copilot"` | `copilot -p -s --no-ask-user` | git, `structdiff`, writing only the narrative file |
+
+All three get the same instructions, the skill's text, which is built into the plugin. So the fallback works even if the skill isn't installed. To run something else, set `generate_cmd` to a full command; it overrides `generator`. In it, `{prompt}` becomes the instructions, `{range}` the range, and `{output}` the narrative file's path.
 
 `:StructDiffGenerate` gives up after `generate_timeout` seconds (default 600), and `:StructDiffCancel` stops it sooner. Either way the command and anything it started are stopped. On Linux it's also stopped if you quit Neovim; on other systems it keeps running, and the next `:StructDiff` on that range picks up whatever it writes.
 
@@ -169,10 +183,9 @@ opts = {
   narrative_height = 15,
   show_reasons = true,
   display_order = { "Source", "Tests", "Docs", "Config/Build", "CI" },
+  generator = "claude",    -- fallback agent: "claude", "codex" or "copilot"
+  generate_cmd = {},       -- optional full override; {prompt}, {range}, {output} are filled in
   generate_timeout = 600,  -- seconds; 0 waits forever
-  -- "{range}" is replaced by the range ("" for the working tree)
-  generate_cmd = { "claude", "-p", "/diff-narrative {range}", "--permission-mode", "acceptEdits",
-                   "--allowedTools", "Bash(git:*)", "Read", "Write" },
   keymaps = { next_group = "]g", prev_group = "[g", next_file = "]f", prev_file = "[f",
               select = "<CR>", toggle_fold = { "za", "<Tab>" }, toggle_narrative = "gn",
               toggle_reasons = "gr", refresh = "R", close = "q" },

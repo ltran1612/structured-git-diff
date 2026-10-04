@@ -21,8 +21,10 @@ thread_local! {
     static CANCEL: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
 }
 
-/// Run the diff-narrative skill (config.generate_cmd) in the background and
-/// reload when it finishes. With `spec`, (re)opens the view on that range.
+/// The fallback for changes nobody narrated: run the configured agent CLI
+/// (`generator`, or `generate_cmd`) with the diff-narrative instructions in
+/// the background, and reload when it finishes. With `spec`, (re)opens the
+/// view on that range.
 pub fn generate(spec: Option<String>) {
     let spec = spec.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
     let open_spec = with_view(|v| v.model().spec.clone());
