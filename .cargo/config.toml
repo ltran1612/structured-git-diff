@@ -1,0 +1,9 @@
+# nvim-oxi plugins call Neovim's C API, which only exists once Neovim has
+# loaded the library. macOS's linker rejects those undefined symbols unless
+# told to resolve them at load time. Same flags as nvim-oxi's own
+# .cargo/config.toml (see its examples/README.md).
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
