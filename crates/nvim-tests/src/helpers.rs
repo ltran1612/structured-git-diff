@@ -1,75 +1,8 @@
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 use nvim_oxi::api::{self, Buffer, Window};
 
-pub struct TempRepo {
-    _dir: tempfile::TempDir,
-    pub root: PathBuf,
-}
-
-pub fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-pub fn write(root: &Path, path: &str, content: &str) {
-    let p = root.join(path);
-    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-    std::fs::write(p, content).unwrap();
-}
-
-pub fn repo(files: &[(&str, &str)]) -> TempRepo {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    git(&root, &["init", "-q"]);
-    for (p, c) in files {
-        write(&root, p, c);
-    }
-    git(&root, &["add", "-A"]);
-    git(&root, &["commit", "-qm", "init"]);
-    TempRepo { _dir: dir, root }
-}
-
-/// Source + tests + a deleted doc + an untracked file, against HEAD.
-pub fn sample_repo() -> TempRepo {
-    let r = repo(&[
-        ("lua/core.lua", "local M = {}\nreturn M\n"),
-        ("lua/util.lua", "return 1\n"),
-        ("tests/core_spec.lua", "-- spec\n"),
-        ("README.md", "# x\n"),
-    ]);
-    write(&r.root, "lua/core.lua", "local M = {}\nM.retry = true\nreturn M\n");
-    write(&r.root, "lua/backoff.lua", "return 2\n");
-    write(&r.root, "tests/core_spec.lua", "-- spec\n-- retry\n");
-    std::fs::remove_file(r.root.join("README.md")).unwrap();
-    r
-}
-
-/// feature branched off main's first commit; main moved on; uncommitted edit.
-pub fn branch_repo() -> TempRepo {
-    let r = repo(&[("a.lua", "a\n"), ("shared.lua", "s\n"), ("gone.md", "g\n")]);
-    let root = &r.root;
-    git(root, &["checkout", "-qb", "feature"]);
-    write(root, "a.lua", "a feature\n");
-    write(root, "new.lua", "n\n");
-    std::fs::remove_file(root.join("gone.md")).unwrap();
-    git(root, &["add", "-A"]);
-    git(root, &["commit", "-qm", "f1"]);
-    git(root, &["checkout", "-q", "main"]);
-    write(root, "shared.lua", "s main\n");
-    git(root, &["commit", "-qam", "m2"]);
-    git(root, &["checkout", "-q", "feature"]);
-    write(root, "a.lua", "a feature + uncommitted\n");
-    r
-}
+pub use structdiff_testutil::*;
 
 /// Register the plugin and cd into `root`.
 pub fn start(root: &Path) {

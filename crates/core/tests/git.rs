@@ -1,6 +1,4 @@
-mod common;
-
-use common::*;
+use structdiff_testutil::*;
 use structdiff_core::Error;
 use structdiff_core::git::{self, ChangedFile, Repo};
 
@@ -179,4 +177,8 @@ fn unrelated_histories_have_no_merge_base() {
     assert!(matches!(&err, Error::NoMergeBase { a, b } if a == "main" && b == "island"), "{err:?}");
     // two-dot ranges don't need a merge base
     assert!(repo.resolve_range("main..island").is_ok());
+}
+
+fn summary(files: &[structdiff_core::ChangedFile]) -> Vec<String> {
+    files.iter().map(|f| format!("{} {}", f.status, f.path)).collect()
 }

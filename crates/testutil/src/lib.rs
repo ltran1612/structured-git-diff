@@ -1,18 +1,22 @@
-#![allow(dead_code)]
+//! Throwaway git repositories for structdiff's tests. Shared by the core, CLI
+//! and in-Neovim test suites. Deliberately independent of structdiff-core,
+//! so depending on it never creates a cycle.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// A git repository in a temporary directory, deleted on drop.
 pub struct TempRepo {
     _dir: tempfile::TempDir,
     pub root: PathBuf,
 }
 
+/// Run git in `dir` with a fixed identity and default branch; panics on failure.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"])
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"])
         .args(args)
         .output()
         .expect("git runs");
@@ -49,6 +53,22 @@ pub fn repo(files: &[(&str, &str)]) -> TempRepo {
     r
 }
 
+/// Working-tree changes against HEAD across groups: Source edits plus an
+/// untracked file, a test edit, and a deleted doc.
+pub fn sample_repo() -> TempRepo {
+    let r = repo(&[
+        ("lua/core.lua", "local M = {}\nreturn M\n"),
+        ("lua/util.lua", "return 1\n"),
+        ("tests/core_spec.lua", "-- spec\n"),
+        ("README.md", "# x\n"),
+    ]);
+    write(&r.root, "lua/core.lua", "local M = {}\nM.retry = true\nreturn M\n");
+    write(&r.root, "lua/backoff.lua", "return 2\n");
+    write(&r.root, "tests/core_spec.lua", "-- spec\n-- retry\n");
+    remove(&r.root, "README.md");
+    r
+}
+
 /// main: init -> m2 (touches shared.lua). feature branches off init and adds
 /// f1 (edits a.lua, adds new.lua, deletes gone.md). Checked out on feature
 /// with an uncommitted edit and an untracked file.
@@ -68,8 +88,4 @@ pub fn branch_repo() -> TempRepo {
     write(root, "a.lua", "a feature + uncommitted\n");
     write(root, "scratch.txt", "x\n");
     r
-}
-
-pub fn summary(files: &[structdiff_core::ChangedFile]) -> Vec<String> {
-    files.iter().map(|f| format!("{} {}", f.status, f.path)).collect()
 }

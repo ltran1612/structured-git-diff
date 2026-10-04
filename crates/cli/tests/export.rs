@@ -1,17 +1,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"])
-        .args(args)
-        .status()
-        .unwrap()
-        .success();
-    assert!(ok, "git {args:?}");
-}
+use structdiff_testutil::{repo, write};
 
 fn structdiff(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_structdiff")).current_dir(dir).args(args).output().unwrap()
@@ -19,13 +9,9 @@ fn structdiff(dir: &Path, args: &[&str]) -> Output {
 
 #[test]
 fn export_writes_groups_json_matching_the_viewer() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    git(&root, &["init", "-q"]);
-    std::fs::write(root.join("a.lua"), "a\n").unwrap();
-    git(&root, &["add", "-A"]);
-    git(&root, &["commit", "-qm", "init"]);
-    std::fs::write(root.join("a.lua"), "a2\n").unwrap();
+    let r = repo(&[("a.lua", "a\n")]);
+    let root = r.root.clone();
+    write(&root, "a.lua", "a2\n");
 
     let out = structdiff(&root, &["export"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -41,13 +27,9 @@ fn export_writes_groups_json_matching_the_viewer() {
 
 #[test]
 fn export_reuses_the_grouping_from_the_last_export() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().canonicalize().unwrap();
-    git(&root, &["init", "-q"]);
-    std::fs::write(root.join("a.lua"), "a\n").unwrap();
-    git(&root, &["add", "-A"]);
-    git(&root, &["commit", "-qm", "init"]);
-    std::fs::write(root.join("a.lua"), "a2\n").unwrap();
+    let r = repo(&[("a.lua", "a\n")]);
+    let root = r.root.clone();
+    write(&root, "a.lua", "a2\n");
     // As if the Neovim plugin exported with a custom grouping.
     let custom = structdiff_core::Grouping {
         groups: vec![structdiff_core::GroupDef::new("Lua", &[r"\.lua$"])],

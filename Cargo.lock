@@ -549,6 +549,7 @@ version = "0.2.0"
 dependencies = [
  "serde_json",
  "structdiff-core",
+ "structdiff-testutil",
  "tempfile",
 ]
 
@@ -560,6 +561,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "structdiff-testutil",
  "tempfile",
 ]
 
@@ -571,6 +573,13 @@ dependencies = [
  "serde_json",
  "structdiff",
  "structdiff-core",
+ "structdiff-testutil",
+]
+
+[[package]]
+name = "structdiff-testutil"
+version = "0.2.0"
+dependencies = [
  "tempfile",
 ]
 

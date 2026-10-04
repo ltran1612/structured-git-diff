@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 nvim-oxi = { workspace = true, features = ["neovim-0-12", "libuv", "test"] }
 structdiff = { workspace = true }
 structdiff-core = { workspace = true }
-tempfile = "3"
+structdiff-testutil = { workspace = true }
 serde_json = "1"
 
 [build-dependencies]

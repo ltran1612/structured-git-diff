@@ -1,6 +1,4 @@
-mod common;
-
-use common::*;
+use structdiff_testutil::*;
 use structdiff_core::{Error, Grouping, Model, Repo, State, narrative};
 
 fn load(root: &std::path::Path, spec: &str) -> Model {
@@ -91,4 +89,8 @@ fn unknown_range_fails_to_load() {
     let err = Model::load(Repo::discover(&r.root).unwrap(), "nope...HEAD", &Grouping::default()).err().unwrap();
     assert!(matches!(&err, Error::UnknownRevision(rev) if rev == "nope"), "{err:?}");
     assert_eq!(err.to_string(), "unknown revision: nope");
+}
+
+fn summary(files: &[structdiff_core::ChangedFile]) -> Vec<String> {
+    files.iter().map(|f| format!("{} {}", f.status, f.path)).collect()
 }
