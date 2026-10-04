@@ -164,7 +164,8 @@ impl Narrative {
             fingerprint: obj.get("fingerprint").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
             overall: obj.get("overall").and_then(Value::as_str).unwrap_or_default().to_owned(),
             groups: str_map(obj.get("groups")),
-            files: str_map(obj.get("files")),
+            // A file reason is one line in the sidebar.
+            files: str_map(obj.get("files")).into_iter().map(|(p, r)| (p, r.split_whitespace().collect::<Vec<_>>().join(" "))).collect(),
             order: obj
                 .get("order")
                 .and_then(Value::as_array)
@@ -267,7 +268,7 @@ pub fn render(narrative: Option<&Narrative>, groups: &[Group], state: State, spe
     }
     for g in groups {
         lines.push(String::new());
-        lines.push(format!("## {}", g.name));
+        lines.push(format!("## {}", one_line(&g.name)));
         if let Some(why) = n.groups.get(&g.name) {
             lines.push(String::new());
             lines.extend(why.split('\n').map(str::to_owned));
@@ -275,12 +276,19 @@ pub fn render(narrative: Option<&Narrative>, groups: &[Group], state: State, spe
         lines.push(String::new());
         for f in &g.files {
             lines.push(match n.files.get(&f.path) {
-                Some(reason) => format!("- `{}` — {reason}", f.path),
-                None => format!("- `{}`", f.path),
+                Some(reason) => format!("- `{}` — {reason}", one_line(&f.path)),
+                None => format!("- `{}`", one_line(&f.path)),
             });
         }
     }
     lines
+}
+
+/// `text` made safe to show on one line: newlines and carriage returns
+/// (which git allows in file names) are shown escaped. Neovim rejects a
+/// buffer line containing a newline.
+pub fn one_line(text: &str) -> String {
+    text.replace('\n', "\\n").replace('\r', "\\r")
 }
 
 /// Greedy word wrap by character count.

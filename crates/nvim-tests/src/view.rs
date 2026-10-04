@@ -766,3 +766,33 @@ fn opening_works_after_a_session_restored_our_buffers() {
     structdiff::close();
     assert_eq!(structdiff::ui::tab_count(), tabs, "a tab leaked");
 }
+
+#[nvim_oxi::test]
+fn newlines_in_names_and_reasons_do_not_blank_the_view() {
+    let r = sample_repo();
+    write(&r.root, "lua/odd\nname.lua", "x\n"); // git allows newlines in paths
+    start(&r.root);
+    open_wait(None);
+    let fp = structdiff::with_view(|v| v.model().fingerprint.clone()).unwrap();
+    std::fs::create_dir_all(narrative::dir(&r.root)).unwrap();
+    std::fs::write(
+        narrative::path(&r.root, ""),
+        serde_json::json!({
+            "fingerprint": fp, "overall": "Story.",
+            "groups": {"Source": "first line\nsecond line"},
+            "files": {"lua/core.lua": "turns retry on\nand more", "lua/odd\nname.lua": "odd file"}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    structdiff::reload_narrative();
+    structdiff::toggle_narrative();
+    let p = panel();
+    assert_eq!(p[0], " StructDiff  5 files", "{p:?}");
+    assert!(p.iter().any(|l| l.contains("odd\\nname.lua")), "{p:?}");
+    assert!(virt_texts().contains(&"turns retry on and more".to_owned()), "{:?}", virt_texts());
+    let nlines = structdiff::with_view(|v| lines(v.narrative_buf().unwrap())).unwrap();
+    assert!(nlines.contains(&"Story.".to_owned()), "{nlines:?}");
+    assert!(nlines.iter().any(|l| l.contains("odd\\nname.lua") && l.contains("odd file")), "{nlines:?}");
+    structdiff::close();
+}

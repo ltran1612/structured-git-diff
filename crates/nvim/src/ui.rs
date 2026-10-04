@@ -38,7 +38,9 @@ pub fn filetype_for(path: &str) -> Option<String> {
 /// Replace a buffer's lines, toggling 'modifiable' around the write.
 pub fn set_lines(buf: &mut Buffer, lines: &[String]) {
     buf_opt(buf, "modifiable", true);
-    let _ = buf.set_lines(.., false, lines.iter().map(String::as_str));
+    if let Err(e) = buf.set_lines(.., false, lines.iter().map(String::as_str)) {
+        notify(&format!("could not draw {}: {e}", buf_name(buf)), ERROR);
+    }
     buf_opt(buf, "modifiable", false);
     buf_opt(buf, "modified", false);
 }

@@ -437,7 +437,7 @@ impl View {
         for (gi, g) in self.model.groups.iter().enumerate() {
             add(String::new(), Item::Blank, &mut lines);
             let collapsed = self.collapsed.contains(&g.name);
-            let head = format!("{} {}", if collapsed { "▸" } else { "▾" }, g.name);
+            let head = format!("{} {}", if collapsed { "▸" } else { "▾" }, narrative::one_line(&g.name));
             let row = add(format!("{head} ({})", g.files.len()), Item::Group(gi), &mut lines);
             marks.push(Mark::Hl { row, start: 0, end: head.len(), group: "StructDiffGroup" });
             marks.push(Mark::Hl { row, start: head.len(), end: lines[row].len(), group: "StructDiffCount" });
@@ -453,15 +453,15 @@ impl View {
                     Some((d, n)) => (Some(d), n),
                     None => (None, f.path.as_str()),
                 };
-                let mut text = format!("  {} {name}", f.status);
+                let mut text = format!("  {} {}", f.status, narrative::one_line(name));
                 let dir_start = text.len();
                 if let Some(d) = dir {
                     text.push_str("  ");
-                    text.push_str(d);
+                    text.push_str(&narrative::one_line(d));
                 }
                 if let Some(old) = &f.old_path {
                     text.push_str(" ← ");
-                    text.push_str(old);
+                    text.push_str(&narrative::one_line(old));
                 }
                 let row = add(text, Item::File(gi, fi), &mut lines);
                 marks.push(Mark::Hl { row, start: 2, end: 2 + f.status.len_utf8(), group: status_hl(f.status) });
