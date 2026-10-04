@@ -67,14 +67,28 @@ pub fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(8000)].contains(&0)
 }
 
+/// Decode file bytes into display lines the way Neovim would read the
+/// same file, so revision panes diff cleanly against real buffers:
+/// - text that isn't valid UTF-8 is read as Latin-1 (the fallback in
+///   Neovim's default 'fileencodings'), which keeps distinct bytes distinct;
+/// - when every line ends in CRLF, the CRs are dropped, as Neovim does for
+///   a 'fileformat' dos file.
 pub fn to_lines(bytes: &[u8]) -> Vec<String> {
     if is_binary(bytes) {
         return vec!["[binary file]".into()];
     }
-    let text = String::from_utf8_lossy(bytes);
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_owned(),
+        Err(_) => bytes.iter().map(|&b| char::from(b)).collect(),
+    };
     let mut lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
     if lines.last().is_some_and(String::is_empty) {
         lines.pop();
+    }
+    if !lines.is_empty() && lines.iter().all(|l| l.ends_with('\r')) {
+        for l in &mut lines {
+            l.pop();
+        }
     }
     lines
 }

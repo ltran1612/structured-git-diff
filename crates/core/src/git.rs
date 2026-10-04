@@ -255,6 +255,16 @@ impl Repo {
         }
     }
 
+    /// File content at `rev` as a checkout would write it: with line-ending
+    /// conversion and smudge filters (such as git-lfs) applied, so it
+    /// compares cleanly against the working tree. Falls back to the stored
+    /// content when a filter can't run.
+    pub fn content_checked_out(&self, rev: &str, path: &str) -> Option<Vec<u8>> {
+        run_raw(&self.root, &["cat-file", "--filters", &format!("{rev}:{path}")], None)
+            .ok()
+            .or_else(|| self.content(rev, path))
+    }
+
     /// File content at `rev`, or None when it doesn't exist there.
     pub fn content(&self, rev: &str, path: &str) -> Option<Vec<u8>> {
         run_raw(&self.root, &["show", &format!("{rev}:{path}")], None).ok()

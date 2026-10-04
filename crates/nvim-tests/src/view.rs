@@ -623,3 +623,40 @@ fn a_rescan_from_a_replaced_view_does_not_touch_the_new_one() {
     assert_eq!(files, ["a.lua", "new.lua", "gone.md"]);
     structdiff::close();
 }
+
+/// Lines that differ between the two diff panes, as Neovim sees them.
+fn differing_lines() -> usize {
+    let (l, r) = structdiff::with_view(|v| (win_lines(v.left()), win_lines(v.right()))).unwrap();
+    let n = l.len().max(r.len());
+    (0..n).filter(|&i| l.get(i) != r.get(i)).count()
+}
+
+#[nvim_oxi::test]
+fn crlf_latin1_and_filtered_files_only_show_real_changes() {
+    let r = repo(&[("x", "x\n")]);
+    let root = &r.root;
+    // CRLF file, one line edited
+    std::fs::write(root.join("build.bat"), "one\r\ntwo\r\nthree\r\nfour\r\n").unwrap();
+    // Latin-1 file, one line edited
+    std::fs::write(root.join("latin.txt"), b"caf\xe9\nna\xefve\nend\n").unwrap();
+    // a clean/smudge filter: stored lowercase, checked out uppercase
+    write(root, ".gitattributes", "*.up filter=upper\n");
+    git(root, &["config", "filter.upper.clean", "tr A-Z a-z"]);
+    git(root, &["config", "filter.upper.smudge", "tr a-z A-Z"]);
+    write(root, "doc.up", "ALPHA\nBETA\nGAMMA\n");
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "files"]);
+    std::fs::write(root.join("build.bat"), "one\r\nTWO\r\nthree\r\nfour\r\n").unwrap();
+    std::fs::write(root.join("latin.txt"), b"caf\xe9\nNA\xefVE\nend\n").unwrap();
+    write(root, "doc.up", "ALPHA\nBETA\nGAMMA\nDELTA\n");
+    start(root);
+    open_wait(None);
+    for path in ["build.bat", "latin.txt", "doc.up"] {
+        let idx = structdiff::with_view(|v| v.model().index_of(path)).flatten().unwrap();
+        structdiff::with_view(|v| v.current_index()).unwrap();
+        structdiff::goto_file(idx as i64 - structdiff::with_view(|v| v.current_index().unwrap() as i64).unwrap());
+        assert_eq!(current().as_deref(), Some(path));
+        assert_eq!(differing_lines(), 1, "{path}: only the edited line should differ");
+    }
+    structdiff::close();
+}

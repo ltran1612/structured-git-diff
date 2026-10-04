@@ -269,8 +269,16 @@ impl View {
 
     // Diff panes -----------------------------------------------------------
 
+    /// A revision's file, as display lines. Against the working tree the
+    /// left side is read as a checkout would write it (line endings,
+    /// smudge filters), so it lines up with the real file on the right.
     fn rev_lines(&self, rev: &str, path: &str) -> Vec<String> {
-        self.model.repo.content(rev, path).map(|b| ui::to_lines(&b)).unwrap_or_default()
+        let bytes = if self.model.range.target.is_none() {
+            self.model.repo.content_checked_out(rev, path)
+        } else {
+            self.model.repo.content(rev, path)
+        };
+        bytes.map(|b| ui::to_lines(&b)).unwrap_or_default()
     }
 
     /// Fill both panes for `file` and diff them. Returns the right-hand buffer
