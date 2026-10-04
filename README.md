@@ -105,15 +105,17 @@ The viewer only reads `.structdiff/narrative*.json`; it never talks to an AI its
 
 **Best: the agent that made the changes writes it.** When an agent finishes a change, it runs `/diff-narrative [range]` (the skill in `skill/diff-narrative`). That agent knows the request, the decisions and the alternatives it rejected, which no one reading the diff later can recover.
 
-**Fallback: `:StructDiffGenerate`** is for changes nobody narrated, such as your own edits, someone else's branch, or a session that's gone. It starts a fresh agent that reconstructs the "why" from the diff, the commit messages and the surrounding code. Pick the agent CLI with `generator`:
+**Fallback: `:StructDiffGenerate`** is for changes nobody narrated, such as your own edits, someone else's branch, or a session that's gone. It starts a fresh agent that reconstructs the "why" from the diff, the commit messages and the surrounding code.
 
-| `generator` | Runs | Permissions granted |
+Because that might be someone else's branch, the agent is treated as untrusted: it can read the checkout, but it can't run commands or write anything. structdiff gathers the evidence itself (the changed files, the commit messages, the diff up to about 90 KB, untracked files' contents) and puts it in the prompt, marked as data rather than instructions. The agent replies with the narrative as JSON. structdiff then checks the reply, drops anything about files outside the change set, sets the fingerprint itself and writes the file. A prompt injection in the branch can at worst produce a misleading narrative. Pick the agent CLI with `generator`:
+
+| `generator` | Runs | What the agent can do |
 |---|---|---|
-| `"claude"` (default) | `claude -p` | git, `structdiff export`, reading, writing files |
-| `"codex"` | `codex exec --sandbox workspace-write --ephemeral` | Codex's sandbox: writes only inside the repo |
-| `"copilot"` | `copilot -p -s --no-ask-user` | git, `structdiff`, writing only the narrative file |
+| `"claude"` (default) | `claude -p --restricted --strict-mcp-config --tools Read,Grep,Glob --permission-mode dontAsk` | read files only. `--restricted` also ignores the checkout's settings files, so a branch's `.claude/settings.json` hooks don't run, and `--strict-mcp-config` skips its `.mcp.json` servers |
+| `"codex"` | `codex exec --sandbox read-only --ephemeral` | run commands in a read-only sandbox with no network |
+| `"copilot"` | `copilot -p -s --no-ask-user` | nothing that needs approval (no tool grants) |
 
-All three get the same instructions, the skill's text, which is built into the plugin. So the fallback works even if the skill isn't installed. To run something else, set `generate_cmd` to a full command; it overrides `generator`. In it, `{prompt}` becomes the instructions, `{range}` the range, and `{output}` the narrative file's path.
+To run something else, set `generate_cmd` to a full command; it overrides `generator`. In it, `{prompt}` becomes the prompt above, `{range}` the range, and `{output}` the narrative file's path. The command should print the narrative JSON. A command that writes `{output}` itself also works: it then gets `.structdiff/groups.json` as for the skill. Either way, it runs with your permissions, so only use commands you trust.
 
 `:StructDiffGenerate` gives up after `generate_timeout` seconds (default 600), and `:StructDiffCancel` stops it sooner. Either way the command and anything it started are stopped. On Linux it's also stopped if you quit Neovim; on other systems it keeps running, and the next `:StructDiff` on that range picks up whatever it writes.
 

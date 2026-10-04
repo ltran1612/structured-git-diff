@@ -99,6 +99,20 @@ impl Model {
             .map_err(|source| Error::Io { path: narrative::dir(&self.repo.root).join("groups.json"), source })
     }
 
+    /// Turn a generator agent's reply into this change set's narrative. The
+    /// fingerprint is ours, not the agent's, and anything about files or
+    /// groups outside this change set is dropped, so a reply can only
+    /// describe what is actually here.
+    pub fn adopt_reply(&self, reply: &str) -> std::result::Result<Narrative, &'static str> {
+        let mut n = Narrative::parse_reply(reply)?;
+        n.fingerprint = Some(self.fingerprint.clone());
+        let paths: std::collections::HashSet<&str> = self.files.iter().map(|f| f.path.as_str()).collect();
+        n.files.retain(|p, _| paths.contains(p.as_str()));
+        n.order.retain(|p| paths.contains(p.as_str()));
+        n.groups.retain(|name, _| self.groups.iter().any(|g| &g.name == name));
+        Ok(n)
+    }
+
     /// Display order of all files: (group index, file index). `]f` walks it.
     pub fn flat(&self) -> &[(usize, usize)] {
         &self.order

@@ -475,21 +475,66 @@ fn background_jobs_are_all_handled() {
 #[nvim_oxi::test]
 fn generator_is_chosen_from_setup() {
     let lua = |expr: &str| api::call_function::<_, nvim_oxi::Object>("luaeval", (expr,)).unwrap();
-    assert_eq!(structdiff::config().generate_cmd_for("")[0], "claude"); // default
+    let cmd = |spec: &str| structdiff::config().generate_cmd_for(spec, "PROMPT");
+    assert_eq!(cmd("")[0], "claude"); // default
     structdiff::setup(lua("{ generator = 'codex' }"));
-    let cmd = structdiff::config().generate_cmd_for("main...");
-    assert_eq!(&cmd[..2], ["codex", "exec"]);
-    assert!(cmd.last().unwrap().contains("Range argument: `main...`"));
+    assert_eq!(cmd("main...")[..4], ["codex", "exec", "--sandbox", "read-only"]);
+    assert_eq!(cmd("main...").last().unwrap(), "PROMPT");
     structdiff::setup(lua("{ generator = 'copilot' }"));
-    assert!(structdiff::config().generate_cmd_for("").last().unwrap().ends_with("write(.structdiff/narrative.json)"));
+    assert_eq!(cmd("")[..3], ["copilot", "-p", "PROMPT"]);
     // generate_cmd overrides the generator entirely
-    structdiff::setup(lua("{ generator = 'codex', generate_cmd = { 'my-agent', '{range}' } }"));
-    assert_eq!(structdiff::config().generate_cmd_for("main.."), ["my-agent", "main.."]);
+    structdiff::setup(lua("{ generator = 'codex', generate_cmd = { 'my-agent', '{range}', '{output}' } }"));
+    assert_eq!(cmd("main.."), ["my-agent", "main..", ".structdiff/narrative-main...json"]);
     // an unknown generator is reported and leaves the config alone
     capture_notifications();
     structdiff::setup(lua("{ generator = 'gpt' }"));
-    assert_eq!(structdiff::config().generate_cmd_for("main..")[0], "my-agent");
+    assert_eq!(cmd("main..")[0], "my-agent");
     assert!(notifications().iter().any(|m| m.contains("invalid setup options")), "{:?}", notifications());
+}
+
+#[nvim_oxi::test]
+fn an_agents_json_reply_becomes_a_fresh_narrative() {
+    let r = sample_repo();
+    start(&r.root);
+    // Stand-in agent: answers with JSON on stdout, including a path that
+    // isn't in the change set and a forged fingerprint.
+    let reply = r#"Sure: {"fingerprint":"forged","overall":"Adds retry.","files":{"lua/core.lua":"turns retry on","nope.txt":"x"},"order":["lua/core.lua"]}"#;
+    let opts = api::call_function::<_, nvim_oxi::Object>(
+        "luaeval",
+        ("{ generate_cmd = { 'printf', '%s', _A } }", reply),
+    )
+    .unwrap();
+    structdiff::setup(opts);
+    open_wait(None);
+    structdiff::generate(None);
+    assert!(wait_until(5000, || structdiff::with_view(|v| !v.generating()).unwrap_or(false) && !structdiff::busy()));
+    let (state, files) = structdiff::with_view(|v| {
+        let n = v.model().narrative.clone().unwrap();
+        (v.model().state, n.files.keys().cloned().collect::<Vec<_>>())
+    })
+    .unwrap();
+    assert_eq!(state, State::Fresh);
+    assert_eq!(files, ["lua/core.lua"]);
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn a_reply_that_is_not_a_narrative_is_reported() {
+    let r = sample_repo();
+    start(&r.root);
+    let opts = api::call_function::<_, nvim_oxi::Object>("luaeval", ("{ generate_cmd = { 'echo', 'I cannot help with that' } }",)).unwrap();
+    structdiff::setup(opts);
+    open_wait(None);
+    capture_notifications();
+    structdiff::generate(None);
+    assert!(wait_until(5000, || structdiff::with_view(|v| !v.generating()).unwrap_or(false) && !structdiff::busy()));
+    assert!(
+        notifications().iter().any(|m| m.contains("the agent's reply wasn't a narrative") && m.contains("I cannot help")),
+        "{:?}",
+        notifications()
+    );
+    assert!(!narrative::path(&r.root, "").exists());
+    structdiff::close();
 }
 
 #[nvim_oxi::test]

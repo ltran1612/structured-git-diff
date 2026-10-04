@@ -120,11 +120,16 @@ impl Config {
         Grouping { groups: self.groups.clone(), other: self.other_group.clone(), display: self.display_order.clone() }
     }
 
-    /// The command to run for `spec`: `generate_cmd` if set, otherwise the
-    /// `generator`'s, with placeholders filled in.
-    pub fn generate_cmd_for(&self, spec: &str) -> Vec<String> {
-        let template = if self.generate_cmd.is_empty() { self.generator.template() } else { self.generate_cmd.clone() };
+    /// True when `generate_cmd` overrides the generator.
+    pub fn custom_generate_cmd(&self) -> bool {
+        !self.generate_cmd.is_empty()
+    }
+
+    /// The command to run for `spec` with `prompt`: `generate_cmd` if set,
+    /// otherwise the `generator`'s, with placeholders filled in.
+    pub fn generate_cmd_for(&self, spec: &str, prompt: &str) -> Vec<String> {
+        let template = if self.custom_generate_cmd() { self.generate_cmd.clone() } else { self.generator.template() };
         let output = format!(".structdiff/{}", narrative::filename(spec));
-        generator::expand(&template, spec, &output)
+        generator::expand(&template, spec, &output, prompt)
     }
 }

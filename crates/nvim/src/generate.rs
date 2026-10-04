@@ -54,22 +54,39 @@ fn start() {
         }
         v.set_generating(true);
         v.redraw(&cfg);
-        Some((v.model().clone(), cfg.generate_cmd_for(&v.model().spec)))
+        Some(v.model().clone())
     })
     .flatten();
-    let Some((mut model, cmd)) = started else { return };
+    let Some(mut model) = started else { return };
     let grouping = cfg.grouping();
+    let custom = cfg.custom_generate_cmd();
+    let command_cfg = cfg.clone();
     let timeout = (cfg.generate_timeout > 0).then(|| Duration::from_secs(cfg.generate_timeout));
     let cancel = Arc::new(AtomicBool::new(false));
     CANCEL.with(|c| *c.borrow_mut() = Some(cancel.clone()));
     ui::notify("generating narrative…", ui::INFO);
     let spawned = bg::spawn(
         move || {
-            // Hand the skill the current change set and these groups. This is
-            // the only place the plugin writes to the repo.
             model.rescan(&grouping).map_err(|e| e.to_string())?;
-            model.export(&grouping).map_err(|e| e.to_string())?;
-            run(&cmd, &model.repo.root, &cancel, timeout)
+            if custom {
+                // Custom commands may follow the skill, which reads groups.json.
+                model.export(&grouping).map_err(|e| e.to_string())?;
+            }
+            let prompt = structdiff_core::generator::prompt(&model);
+            let cmd = command_cfg.generate_cmd_for(&model.spec, &prompt);
+            let file = structdiff_core::narrative::path(&model.repo.root, &model.spec);
+            let before = modified(&file);
+            let reply = run(&cmd, &model.repo.root, &cancel, timeout)?;
+            // The agent only answers; validating the reply and writing the
+            // file is ours. A custom command may write the file itself.
+            match model.adopt_reply(&reply) {
+                Ok(narrative) => narrative.save(&model.repo, &model.spec).map(|_| ()).map_err(|e| e.to_string()),
+                Err(_) if modified(&file) != before => Ok(()),
+                Err(reason) => {
+                    let snippet: String = reply.trim().chars().take(200).collect();
+                    Err(format!("the agent's reply wasn't a narrative ({reason}): {snippet}"))
+                }
+            }
         },
         finished,
     );
@@ -135,7 +152,12 @@ fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Ve
     })
 }
 
-fn run(cmd: &[String], root: &Path, cancel: &AtomicBool, timeout: Option<Duration>) -> Result<(), String> {
+fn modified(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// Run the command; its stdout on success.
+fn run(cmd: &[String], root: &Path, cancel: &AtomicBool, timeout: Option<Duration>) -> Result<String, String> {
     let mut child = spawn_child(cmd, root).map_err(|e| format!("cannot run {}: {e}", cmd[0]))?;
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
@@ -158,7 +180,7 @@ fn run(cmd: &[String], root: &Path, cancel: &AtomicBool, timeout: Option<Duratio
     };
     let (out, err) = (stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default());
     if status.success() {
-        return Ok(());
+        return Ok(String::from_utf8_lossy(&out).into_owned());
     }
     let err = String::from_utf8_lossy(if err.is_empty() { &out } else { &err });
     let tail: String = err.trim().chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();

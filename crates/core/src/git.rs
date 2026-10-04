@@ -207,6 +207,27 @@ impl Repo {
         Ok(Scan { files, fingerprint })
     }
 
+    /// The range's patch text, cut at `limit` bytes (on a line boundary).
+    /// Returns the text and whether it was cut.
+    pub fn diff_text(&self, range: &Range, limit: usize) -> Result<(String, bool)> {
+        let out = run_raw(&self.root, &Self::diff_args(range, &["--no-color", "--no-ext-diff", "-M"]), None)?;
+        let text = String::from_utf8_lossy(&out);
+        if text.len() <= limit {
+            return Ok((text.into_owned(), false));
+        }
+        let cut = text[..text.floor_char_boundary(limit)].rfind('\n').map_or(0, |i| i + 1);
+        Ok((text[..cut].to_owned(), true))
+    }
+
+    /// Subjects and bodies of the commits in a committed range (empty for
+    /// working-tree ranges).
+    pub fn log(&self, range: &Range) -> Result<String> {
+        match &range.target {
+            Some(target) => run(&self.root, &["log", "--format=%h %s%n%b", &format!("{}..{target}", range.base)]),
+            None => Ok(String::new()),
+        }
+    }
+
     /// File content at `rev`, or None when it doesn't exist there.
     pub fn content(&self, rev: &str, path: &str) -> Option<Vec<u8>> {
         run_raw(&self.root, &["show", &format!("{rev}:{path}")], None).ok()
