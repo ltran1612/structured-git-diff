@@ -25,8 +25,13 @@ pub enum Item {
 
 enum Mark {
     Hl { row: usize, start: usize, end: usize, group: &'static str },
-    Line { row: usize, group: &'static str },
     Virt { row: usize, lines: Vec<String>, group: &'static str },
+}
+
+/// The current-file highlight has its own namespace, so moving between files
+/// only moves this one mark.
+fn current_ns() -> u32 {
+    api::create_namespace("structdiff-current")
 }
 
 pub struct View {
@@ -49,6 +54,8 @@ pub struct View {
     /// Bumped per background rescan; only the latest result is applied.
     scan_gen: u64,
     pending_scans: u32,
+    /// The sidebar no longer matches the model and must be fully redrawn.
+    panel_dirty: bool,
 }
 
 /// The buffers [`View::show`] put in the diff panes.
@@ -104,6 +111,7 @@ impl View {
             watcher: None,
             scan_gen: 0,
             pending_scans: 0,
+            panel_dirty: true,
         };
         view.split_windows(cfg)?;
         Ok(view)
@@ -117,9 +125,11 @@ impl View {
 
     pub fn set_model(&mut self, model: Model) {
         self.model = model;
+        self.panel_dirty = true;
     }
 
     pub fn model_mut(&mut self) -> &mut Model {
+        self.panel_dirty = true;
         &mut self.model
     }
 
@@ -170,6 +180,7 @@ impl View {
 
     pub fn set_generating(&mut self, on: bool) {
         self.generating = on;
+        self.panel_dirty = true;
     }
 
     pub fn set_watcher(&mut self, watcher: Option<TimerHandle>) {
@@ -225,7 +236,7 @@ impl View {
         self.split_windows(cfg)
     }
 
-    pub fn flat(&self) -> Vec<(usize, usize)> {
+    pub fn flat(&self) -> &[(usize, usize)] {
         self.model.flat()
     }
 
@@ -294,11 +305,10 @@ impl View {
     /// Show the idx-th file of the display order. The caller must have taken
     /// the previous real buffer ([`View::take_real_buf`]) to unmap it.
     pub fn show(&mut self, idx: usize, cfg: &Config) -> Result<Option<Shown>, api::Error> {
-        let flat = self.flat();
-        let Some(&pos) = flat.get(idx) else { return Ok(None) };
+        let Some(&pos) = self.flat().get(idx) else { return Ok(None) };
         let file = self.model.file(pos).clone();
         self.current = Some(file.path.clone());
-        self.collapsed.remove(&self.model.groups[pos.0].name);
+        let unfolded = self.collapsed.remove(&self.model.groups[pos.0].name);
         self.ensure_layout(cfg)?;
 
         let (right, right_is_real) = self.show_diff(&file)?;
@@ -306,14 +316,22 @@ impl View {
             self.real_buf = Some(right.clone());
         }
         let left = self.left.get_buf()?;
-        self.redraw(cfg);
+        if self.panel_dirty || unfolded {
+            self.redraw(cfg);
+        } else {
+            // Only the current file changed: move its highlight and the cursor.
+            hl::ensure();
+            self.mark_current();
+            self.focus_current();
+        }
         Ok(Some(Shown { left, right, right_is_real }))
     }
 
     // Sidebar --------------------------------------------------------------
 
+    /// Fully redraw the sidebar and the narrative split.
     pub fn redraw(&mut self, cfg: &Config) {
-        hl::apply();
+        hl::ensure();
         self.render_panel(cfg);
         self.focus_current();
         self.render_narrative();
@@ -387,9 +405,6 @@ impl View {
                 if lines[row].len() > dir_start {
                     marks.push(Mark::Hl { row, start: dir_start, end: lines[row].len(), group: "StructDiffDir" });
                 }
-                if self.current.as_deref() == Some(f.path.as_str()) {
-                    marks.push(Mark::Line { row, group: "StructDiffCurrent" });
-                }
                 if let Some(reason) = reasons.and_then(|n| n.files.get(&f.path)) {
                     let wrapped = narrative::wrap(reason, width.saturating_sub(7));
                     marks.push(Mark::Virt { row, lines: wrapped.iter().map(|l| format!("      {l}")).collect(), group: "StructDiffReason" });
@@ -405,7 +420,6 @@ impl View {
                 Mark::Hl { row, start, end, group } => {
                     (row, (start, SetExtmarkOpts::builder().end_col(end).hl_group(group).build()))
                 }
-                Mark::Line { row, group } => (row, (0, SetExtmarkOpts::builder().line_hl_group(group).build())),
                 Mark::Virt { row, lines, group } => {
                     let virt = lines.into_iter().map(|l| [(l, group)]);
                     (row, (0, SetExtmarkOpts::builder().virt_lines(virt).build()))
@@ -414,6 +428,27 @@ impl View {
             let _ = self.panel_buf.set_extmark(ns, row, opts.0, &opts.1);
         }
         self.line_items = items;
+        self.panel_dirty = false;
+        self.mark_current();
+    }
+
+    /// Row (0-based) of the current file in the sidebar, if visible.
+    fn current_row(&self) -> Option<usize> {
+        let cur = self.current.as_deref()?;
+        self.line_items.iter().position(|it| match *it {
+            Item::File(gi, fi) => self.model.groups[gi].files[fi].path == cur,
+            _ => false,
+        })
+    }
+
+    /// Highlight the current file's line.
+    fn mark_current(&mut self) {
+        let ns = current_ns();
+        let _ = self.panel_buf.clear_namespace(ns, ..);
+        if let Some(row) = self.current_row() {
+            let opts = SetExtmarkOpts::builder().line_hl_group("StructDiffCurrent").build();
+            let _ = self.panel_buf.set_extmark(ns, row, 0, &opts);
+        }
     }
 
     pub fn item_at_cursor(&self) -> Option<Item> {
@@ -422,12 +457,7 @@ impl View {
     }
 
     pub fn focus_current(&mut self) {
-        let Some(cur) = self.current.clone() else { return };
-        let row = self.line_items.iter().position(|it| match *it {
-            Item::File(gi, fi) => self.model.groups[gi].files[fi].path == cur,
-            _ => false,
-        });
-        if let Some(row) = row
+        if let Some(row) = self.current_row()
             && self.sidebar.is_valid()
         {
             let _ = self.sidebar.set_cursor(row + 1, 2);

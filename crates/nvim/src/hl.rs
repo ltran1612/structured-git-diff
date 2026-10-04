@@ -21,11 +21,21 @@ const HIGHLIGHTS: &[(&str, &str)] = &[
 ];
 
 /// `:highlight default link` for every group. Ex commands rather than
-/// `api::set_hl`, whose options struct doesn't match Neovim 0.12.5. Called on
-/// every redraw, which also restores the links after a colorscheme change
-/// clears them (there is no ColorScheme autocmd; see the notes in lib.rs).
+/// `api::set_hl`, whose options struct doesn't match Neovim 0.12.5.
 pub fn apply() {
     for (name, link) in HIGHLIGHTS {
         let _ = api::command(&format!("highlight default link {name} {link}"));
+    }
+}
+
+/// Re-apply the links only if they are gone, which is what a colorscheme
+/// change (`:hi clear`) does. One `:highlight` query instead of a command per
+/// group; called on every draw since there is no ColorScheme autocmd (see the
+/// notes in lib.rs).
+pub fn ensure() {
+    let linked = api::call_function::<_, String>("execute", ("highlight StructDiffTitle",))
+        .is_ok_and(|out| out.contains("links to"));
+    if !linked {
+        apply();
     }
 }

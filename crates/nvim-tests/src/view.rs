@@ -326,3 +326,67 @@ fn reentrant_calls_are_dropped_with_a_warning_not_silently() {
     assert!(msgs[0].contains("re-entrant call from crates/nvim-tests/src/view.rs:"), "{}", msgs[0]);
     structdiff::close();
 }
+
+fn panel_tick() -> i64 {
+    let buf = structdiff::with_view(|v| v.panel_buf().clone()).unwrap();
+    api::call_function("getbufvar", (buf, "changedtick")).unwrap()
+}
+
+/// 1-based sidebar line holding the current-file highlight.
+fn current_mark_line() -> Option<usize> {
+    use nvim_oxi::api::opts::GetExtmarksOpts;
+    use nvim_oxi::api::types::ExtmarkPosition;
+    let ns = api::create_namespace("structdiff-current");
+    structdiff::with_view(|v| {
+        v.panel_buf()
+            .get_extmarks(ns, ExtmarkPosition::ByTuple((0, 0)), ExtmarkPosition::ByTuple((usize::MAX >> 33, 0)), &GetExtmarksOpts::default())
+            .unwrap()
+            .map(|(_, row, _, _)| row + 1)
+            .next()
+    })
+    .unwrap()
+}
+
+#[nvim_oxi::test]
+fn moving_between_files_only_moves_the_current_mark() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    structdiff::goto_group(2); // Source: backoff.lua, then core.lua
+    let tick = panel_tick();
+    let before = current_mark_line().unwrap();
+    structdiff::goto_file(1);
+    assert_eq!(panel_tick(), tick, "the sidebar text was rewritten");
+    let after = current_mark_line().unwrap();
+    assert_eq!(after, before + 1);
+    assert_eq!(panel()[after - 1], "  M core.lua  lua");
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn highlight_links_survive_a_colorscheme_clear() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    api::command("highlight clear").unwrap();
+    structdiff::goto_file(1);
+    let out: String = api::call_function("execute", ("highlight StructDiffTitle",)).unwrap();
+    assert!(out.contains("links to Title"), "{out}");
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn moving_into_a_folded_group_unfolds_it() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None); // on Tests; Docs is next
+    let docs = panel().iter().position(|l| l.starts_with("▾ Docs")).unwrap();
+    structdiff::with_view(|v| v.sidebar().clone()).unwrap().set_cursor(docs + 1, 0).unwrap();
+    structdiff::fold_at_cursor();
+    assert!(panel().contains(&"▸ Docs (1)".to_owned()), "{:?}", panel());
+    structdiff::goto_file(1);
+    assert_eq!(current().as_deref(), Some("README.md"));
+    assert!(panel().contains(&"▾ Docs (1)".to_owned()), "{:?}", panel());
+    assert!(panel().contains(&"  D README.md".to_owned()));
+    structdiff::close();
+}

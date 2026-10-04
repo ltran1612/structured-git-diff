@@ -2,6 +2,7 @@
 //! Everything the viewer shows, without any UI. Loading only reads: nothing
 //! is written to the repo until [`Model::export`].
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::error::{Error, Result};
@@ -19,6 +20,10 @@ pub struct Model {
     pub groups: Vec<Group>,
     pub narrative: Option<Narrative>,
     pub state: State,
+    /// Display order, (group index, file index) per file, and each path's
+    /// position in it. Rebuilt whenever `groups` is.
+    order: Vec<(usize, usize)>,
+    position: HashMap<String, usize>,
 }
 
 impl Model {
@@ -36,6 +41,8 @@ impl Model {
             groups: Vec::new(),
             narrative: None,
             state: State::None,
+            order: Vec::new(),
+            position: HashMap::new(),
         };
         let warnings = model.rescan(grouping)?;
         Ok((model, warnings))
@@ -69,7 +76,18 @@ impl Model {
         if let Some(n) = &self.narrative {
             group::sort_by_order(&mut self.groups, &n.order);
         }
+        self.index_order();
         warnings
+    }
+
+    fn index_order(&mut self) {
+        self.order = self
+            .groups
+            .iter()
+            .enumerate()
+            .flat_map(|(gi, g)| (0..g.files.len()).map(move |fi| (gi, fi)))
+            .collect();
+        self.position = self.order.iter().enumerate().map(|(i, &(gi, fi))| (self.groups[gi].files[fi].path.clone(), i)).collect();
     }
 
     /// Write `.structdiff/groups.json` for the diff-narrative skill (and
@@ -81,20 +99,17 @@ impl Model {
     }
 
     /// Display order of all files: (group index, file index). `]f` walks it.
-    pub fn flat(&self) -> Vec<(usize, usize)> {
-        self.groups
-            .iter()
-            .enumerate()
-            .flat_map(|(gi, g)| (0..g.files.len()).map(move |fi| (gi, fi)))
-            .collect()
+    pub fn flat(&self) -> &[(usize, usize)] {
+        &self.order
     }
 
     pub fn file(&self, (gi, fi): (usize, usize)) -> &ChangedFile {
         &self.groups[gi].files[fi]
     }
 
+    /// Position of `path` in the display order.
     pub fn index_of(&self, path: &str) -> Option<usize> {
-        self.flat().iter().position(|&pos| self.file(pos).path == path)
+        self.position.get(path).copied()
     }
 
     pub fn file_count(&self) -> usize {
