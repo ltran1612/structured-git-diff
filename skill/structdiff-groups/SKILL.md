@@ -62,7 +62,7 @@ Areas that churn often and independently deserve their own group. Small areas th
 If `.structdiff.json` already exists, it's your starting point: keep the user's groups unless asked to replace them, and fix what's wrong. Then see how the current grouping (or the defaults) classifies every file:
 
 ```sh
-structdiff groups          # current .structdiff.json, else the defaults
+structdiff groups          # .structdiff.json, else the Neovim config recorded by the last export, else the defaults
 structdiff groups --all    # every file, not just samples
 ```
 

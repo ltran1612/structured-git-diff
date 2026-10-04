@@ -93,9 +93,15 @@ impl Model {
 
     /// Write `.structdiff/groups.json` for the diff-narrative skill (and
     /// exclude `.structdiff/` from git). The only write to the repo.
+    ///
+    /// `grouping` is the base grouping (the Neovim config), before the
+    /// repo's `.structdiff.json` is applied. That base is what gets recorded,
+    /// so `structdiff export` and `structdiff groups` start from the same
+    /// place as the viewer and apply `.structdiff.json` themselves. Recording
+    /// the merged grouping would let a deleted or branch-local
+    /// `.structdiff.json` keep controlling them.
     pub fn export(&self, grouping: &Grouping) -> Result<PathBuf> {
-        let (grouping, _) = grouping.for_repo(&self.repo.root);
-        narrative::export_groups(&self.repo, &self.range, &self.groups, &self.fingerprint, &grouping)
+        narrative::export_groups(&self.repo, &self.range, &self.groups, &self.fingerprint, grouping)
             .map_err(|source| Error::Io { path: narrative::dir(&self.repo.root).join("groups.json"), source })
     }
 

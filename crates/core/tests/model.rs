@@ -124,3 +124,16 @@ fn structdiff_refuses_to_write_through_a_symlinked_scratch_dir() {
     assert!(m.export(&Grouping::default()).is_err());
     assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none(), "wrote outside the repo");
 }
+
+#[test]
+fn export_records_the_base_grouping_not_the_repo_file() {
+    let r = repo(&[("db/1.sql", "x\n"), ("a.rs", "a\n")]);
+    write(&r.root, "a.rs", "b\n");
+    write(&r.root, ".structdiff.json", r#"{"groups":[{"name":"Migrations","patterns":["^db/"]}]}"#);
+    let base = Grouping { other: "Misc".into(), ..Grouping::default() };
+    let (m, _) = Model::load(Repo::discover(&r.root).unwrap(), "", &base).unwrap();
+    m.export(&base).unwrap();
+    // A later export or `structdiff groups` must not inherit .structdiff.json's
+    // groups once that file is gone: the record is the Neovim-side base.
+    assert_eq!(narrative::exported_grouping(&r.root), Some(base));
+}
