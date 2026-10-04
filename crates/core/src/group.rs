@@ -47,16 +47,28 @@ pub fn default_groups() -> Vec<GroupDef> {
     ]
 }
 
-/// How files are grouped: ordered definitions plus the fallback group name.
+/// The order groups are shown in by default, independent of the order they
+/// are matched in (Tests must match before Source, but reads better after).
+pub fn default_display_order() -> Vec<String> {
+    ["Source", "Tests", "Docs", "Config/Build", "CI"].map(String::from).to_vec()
+}
+
+/// How files are grouped: definitions in match-priority order, the fallback
+/// group name, and the order groups are displayed in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grouping {
     pub groups: Vec<GroupDef>,
     pub other: String,
+    /// Group names in display order. Groups not listed follow in match
+    /// order, then the fallback group. A narrative's reading order still
+    /// takes precedence.
+    #[serde(default = "default_display_order")]
+    pub display: Vec<String>,
 }
 
 impl Default for Grouping {
     fn default() -> Self {
-        Self { groups: default_groups(), other: "Other".to_owned() }
+        Self { groups: default_groups(), other: "Other".to_owned(), display: default_display_order() }
     }
 }
 
@@ -68,13 +80,21 @@ impl Grouping {
         #[derive(Deserialize)]
         struct RepoConfig {
             groups: Vec<GroupDef>,
+            display_order: Option<Vec<String>>,
         }
         let path = root.join(".structdiff.json");
         let Ok(text) = std::fs::read_to_string(&path) else {
             return (self.clone(), None);
         };
         match serde_json::from_str::<RepoConfig>(&text) {
-            Ok(cfg) => (Grouping { groups: cfg.groups, other: self.other.clone() }, None),
+            Ok(cfg) => (
+                Grouping {
+                    groups: cfg.groups,
+                    other: self.other.clone(),
+                    display: cfg.display_order.unwrap_or_else(|| self.display.clone()),
+                },
+                None,
+            ),
             Err(e) => (self.clone(), Some(format!("ignoring invalid {}: {e}", path.display()))),
         }
     }
@@ -131,6 +151,18 @@ pub fn assign(files: &[ChangedFile], compiled: &Compiled, other_name: &str) -> V
     groups.push(other);
     groups.retain(|g| !g.files.is_empty());
     groups
+}
+
+/// Put groups in display order: names in `display` first, in that order;
+/// unlisted groups after them in their current (match) order. The fallback
+/// group stays last unless `display` names it.
+pub fn sort_display(groups: &mut [Group], display: &[String], other: &str) {
+    let rank = |name: &str| match display.iter().position(|d| d == name) {
+        Some(i) => (0, i),
+        None if name == other => (2, 0),
+        None => (1, 0),
+    };
+    groups.sort_by_key(|g| rank(&g.name)); // stable: unlisted keep match order
 }
 
 /// Stable-sort each group's files by their position in `order` (unlisted

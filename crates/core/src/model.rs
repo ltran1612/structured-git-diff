@@ -73,6 +73,7 @@ impl Model {
         let (compiled, bad) = Compiled::new(&grouping.groups);
         warnings.extend(bad);
         self.groups = group::assign(&self.files, &compiled, &grouping.other);
+        group::sort_display(&mut self.groups, &grouping.display, &grouping.other);
         if let Some(n) = &self.narrative {
             group::sort_by_order(&mut self.groups, &n.order);
         }

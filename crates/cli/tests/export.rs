@@ -34,6 +34,7 @@ fn export_reuses_the_grouping_from_the_last_export() {
     let custom = structdiff_core::Grouping {
         groups: vec![structdiff_core::GroupDef::new("Lua", &[r"\.lua$"])],
         other: "Rest".into(),
+        display: Vec::new(),
     };
     let repo = structdiff_core::Repo::discover(&root).unwrap();
     let (model, _) = structdiff_core::Model::load(repo, "", &custom).unwrap();

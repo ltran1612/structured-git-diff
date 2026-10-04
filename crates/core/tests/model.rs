@@ -46,17 +46,19 @@ fn narrative_order_regroups_and_staleness_tracks_the_diff() {
     write(&r.root, "lua/core.lua", "y\n");
     write(&r.root, "tests/core_spec.lua", "t2\n");
     let mut m = load(&r.root, "");
-    assert_eq!(m.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["Tests", "Source"]);
+    // display order (Source first), not match order (Tests first)
+    assert_eq!(m.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["Source", "Tests"]);
     std::fs::create_dir_all(narrative::dir(&r.root)).unwrap();
     std::fs::write(
         narrative::path(&r.root, ""),
-        serde_json::json!({"version":1,"fingerprint":m.fingerprint,"order":["lua/core.lua","tests/core_spec.lua"]}).to_string(),
+        serde_json::json!({"version":1,"fingerprint":m.fingerprint,"order":["tests/core_spec.lua","lua/core.lua"]}).to_string(),
     )
     .unwrap();
     m.reload_narrative(&Grouping::default());
     assert_eq!(m.state, State::Fresh);
-    assert_eq!(m.groups[0].name, "Source");
-    assert_eq!(m.index_of("tests/core_spec.lua"), Some(1));
+    // the narrative's reading order beats the display order
+    assert_eq!(m.groups[0].name, "Tests");
+    assert_eq!(m.index_of("lua/core.lua"), Some(1));
     write(&r.root, "lua/core.lua", "changed again\n");
     m.rescan(&Grouping::default()).unwrap();
     assert_eq!(m.state, State::Stale);

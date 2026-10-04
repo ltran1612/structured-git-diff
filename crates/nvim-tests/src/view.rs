@@ -16,36 +16,37 @@ fn view_groups_files_and_navigates_across_groups() {
     let r = sample_repo();
     start(&r.root);
     open_wait(None);
-    assert_eq!(group_names(), ["Tests", "Docs", "Source"]);
+    // display order: Source, Tests, Docs (match order puts Tests first)
+    assert_eq!(group_names(), ["Source", "Tests", "Docs"]);
     let p = panel();
     assert_eq!(p[0], " StructDiff  4 files");
     assert_eq!(p[1], " HEAD → working tree");
     assert!(p.contains(&"▾ Source (2)".into()), "{p:?}");
     assert!(p.contains(&"  ? backoff.lua  lua".into()), "{p:?}");
-    assert_eq!(current().as_deref(), Some("tests/core_spec.lua"));
+    assert_eq!(current().as_deref(), Some("lua/backoff.lua"));
     let (left, right, sidebar) = structdiff::with_view(|v| (v.left().clone(), v.right().clone(), v.sidebar().clone())).unwrap();
     assert!(diff_on(&left) && diff_on(&right));
-    assert!(name(&right).ends_with("/tests/core_spec.lua"));
+    assert!(name(&right).ends_with("/lua/backoff.lua"));
+    assert_eq!(win_lines(&left), [""]); // untracked: empty left side
 
+    structdiff::goto_file(1);
+    assert_eq!(current().as_deref(), Some("lua/core.lua"));
+    assert_eq!(name(&left), "structdiff://HEAD/lua/core.lua");
+
+    structdiff::goto_group(1);
+    assert_eq!(current().as_deref(), Some("tests/core_spec.lua"));
     structdiff::goto_group(1);
     assert_eq!(current().as_deref(), Some("README.md")); // deleted: empty right side
     assert_eq!(win_lines(&right), [""]);
     assert_eq!(win_lines(&left), ["# x"]);
-
-    structdiff::goto_file(1);
-    assert_eq!(current().as_deref(), Some("lua/backoff.lua")); // untracked: empty left side
-    assert_eq!(win_lines(&left), [""]);
-    structdiff::goto_file(1);
-    assert_eq!(current().as_deref(), Some("lua/core.lua"));
-    assert_eq!(name(&left), "structdiff://HEAD/lua/core.lua");
     structdiff::goto_file(1); // past the end: stays put
-    assert_eq!(current().as_deref(), Some("lua/core.lua"));
-    structdiff::goto_group(-1);
     assert_eq!(current().as_deref(), Some("README.md"));
+    structdiff::goto_group(-1);
+    assert_eq!(current().as_deref(), Some("tests/core_spec.lua"));
 
     // the sidebar cursor follows the current file
     let (line, _) = sidebar.get_cursor().unwrap();
-    assert_eq!(panel()[line - 1], "  D README.md");
+    assert_eq!(panel()[line - 1], "  M core_spec.lua  tests");
     structdiff::close();
 }
 
@@ -135,8 +136,7 @@ fn branch_range_uses_read_only_revisions_and_its_own_narrative() {
     open_wait(Some("main...HEAD"));
     assert_eq!(panel()[1], " main...HEAD");
     let flat: Vec<String> = structdiff::with_view(|v| v.flat().iter().map(|&p| v.model().file(p).path.clone()).collect()).unwrap();
-    assert_eq!(flat, ["gone.md", "a.lua", "new.lua"]);
-    structdiff::goto_file(1);
+    assert_eq!(flat, ["a.lua", "new.lua", "gone.md"]); // Source before Docs
     let (left, right, real) = structdiff::with_view(|v| (v.left().clone(), v.right().clone(), v.real_buf().is_some())).unwrap();
     assert_eq!(name(&right), "structdiff://HEAD/a.lua");
     assert_eq!(win_lines(&right), ["a feature"]); // committed, not the worktree edit
@@ -162,7 +162,7 @@ fn close_removes_the_tab_and_real_buffer_keymaps() {
     let tabs = structdiff::ui::tab_count();
     open_wait(None);
     assert_eq!(structdiff::ui::tab_count(), tabs + 1);
-    structdiff::goto_group(2); // lua/backoff.lua, a real buffer
+    // starts on lua/backoff.lua, a real working-tree buffer
     let buf = structdiff::with_view(|v| v.real_buf().cloned()).flatten().expect("real buffer");
     let ours = |b: &api::Buffer| {
         b.get_keymap(api::types::Mode::Normal)
@@ -250,7 +250,7 @@ fn open_does_not_block_and_reports_progress() {
     // Returned before git finished: no view yet, but busy.
     assert!(structdiff::busy());
     assert!(wait_until(5000, || !structdiff::busy()));
-    assert_eq!(current().as_deref(), Some("tests/core_spec.lua"));
+    assert_eq!(current().as_deref(), Some("lua/backoff.lua"));
     structdiff::close();
 }
 
@@ -351,8 +351,7 @@ fn current_mark_line() -> Option<usize> {
 fn moving_between_files_only_moves_the_current_mark() {
     let r = sample_repo();
     start(&r.root);
-    open_wait(None);
-    structdiff::goto_group(2); // Source: backoff.lua, then core.lua
+    open_wait(None); // on Source's backoff.lua; core.lua is next
     let tick = panel_tick();
     let before = current_mark_line().unwrap();
     structdiff::goto_file(1);
@@ -379,15 +378,16 @@ fn highlight_links_survive_a_colorscheme_clear() {
 fn moving_into_a_folded_group_unfolds_it() {
     let r = sample_repo();
     start(&r.root);
-    open_wait(None); // on Tests; Docs is next
-    let docs = panel().iter().position(|l| l.starts_with("▾ Docs")).unwrap();
-    structdiff::with_view(|v| v.sidebar().clone()).unwrap().set_cursor(docs + 1, 0).unwrap();
+    open_wait(None);
+    structdiff::goto_file(1); // last file of Source; Tests is next
+    let tests = panel().iter().position(|l| l.starts_with("▾ Tests")).unwrap();
+    structdiff::with_view(|v| v.sidebar().clone()).unwrap().set_cursor(tests + 1, 0).unwrap();
     structdiff::fold_at_cursor();
-    assert!(panel().contains(&"▸ Docs (1)".to_owned()), "{:?}", panel());
+    assert!(panel().contains(&"▸ Tests (1)".to_owned()), "{:?}", panel());
     structdiff::goto_file(1);
-    assert_eq!(current().as_deref(), Some("README.md"));
-    assert!(panel().contains(&"▾ Docs (1)".to_owned()), "{:?}", panel());
-    assert!(panel().contains(&"  D README.md".to_owned()));
+    assert_eq!(current().as_deref(), Some("tests/core_spec.lua"));
+    assert!(panel().contains(&"▾ Tests (1)".to_owned()), "{:?}", panel());
+    assert!(panel().contains(&"  M core_spec.lua  tests".to_owned()));
     structdiff::close();
 }
 

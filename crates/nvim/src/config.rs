@@ -3,7 +3,7 @@
 use nvim_oxi::Object;
 use serde::Deserialize;
 use structdiff_core::{GroupDef, Grouping};
-use structdiff_core::group::default_groups;
+use structdiff_core::group::{default_display_order, default_groups};
 
 /// One key or several: `"]g"` or `{ "za", "<Tab>" }`.
 #[derive(Clone, Debug, Deserialize)]
@@ -64,6 +64,8 @@ pub struct Config {
     /// Rust `regex` patterns against repo-relative paths; first match wins.
     pub groups: Vec<GroupDef>,
     pub other_group: String,
+    /// Group names in the order they are shown (match order is `groups`).
+    pub display_order: Vec<String>,
     pub sidebar_width: u32,
     pub narrative_height: u32,
     pub show_reasons: bool,
@@ -81,6 +83,7 @@ impl Default for Config {
         Self {
             groups: default_groups(),
             other_group: "Other".into(),
+            display_order: default_display_order(),
             sidebar_width: 40,
             narrative_height: 15,
             show_reasons: true,
@@ -121,7 +124,7 @@ impl Config {
     }
 
     pub fn grouping(&self) -> Grouping {
-        Grouping { groups: self.groups.clone(), other: self.other_group.clone() }
+        Grouping { groups: self.groups.clone(), other: self.other_group.clone(), display: self.display_order.clone() }
     }
 
     /// generate_cmd with "{range}" replaced by `spec`.

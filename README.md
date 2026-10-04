@@ -116,15 +116,17 @@ opts = {
 }
 ```
 
-Defaults: Tests, CI, Config/Build, Docs, Source, Other (see `default_groups` in `crates/core/src/group.rs`).
+Default match order: Tests, CI, Config/Build, Docs, Source, Other (see `default_groups` in `crates/core/src/group.rs`). Tests comes before Source so `foo_test.go` lands in Tests.
 
 **Per-repo groups:** put a committable `.structdiff.json` at the repo root:
 
 ```json
-{ "groups": [ { "name": "Migrations", "patterns": ["^db/migrate/"] } ] }
+{ "groups": [ { "name": "Migrations", "patterns": ["^db/migrate/"] } ], "display_order": ["Migrations"] }
 ```
 
-Groups are displayed in config order. Once a narrative exists, the group holding the story's first file (the root cause) moves to the top, and files within each group follow the narrative's reading order.
+**Display order is separate from match order.** `display_order` lists group names in the order they are shown (default: Source, Tests, Docs, Config/Build, CI). Groups it doesn't name follow in match order, and `other_group` comes last unless named. `display_order` in `.structdiff.json` is optional.
+
+Once a narrative exists, its reading order wins: the group holding the story's first file (the root cause) moves to the top, and files within each group follow the narrative.
 
 ## The narrative contract
 
@@ -165,6 +167,7 @@ opts = {
   sidebar_width = 40,
   narrative_height = 15,
   show_reasons = true,
+  display_order = { "Source", "Tests", "Docs", "Config/Build", "CI" },
   generate_timeout = 600,  -- seconds; 0 waits forever
   -- "{range}" is replaced by the range ("" for the working tree)
   generate_cmd = { "claude", "-p", "/diff-narrative {range}", "--permission-mode", "acceptEdits",

@@ -79,7 +79,7 @@ fn sort_by_order_puts_the_group_holding_the_first_file_first() {
 #[test]
 fn repo_config_replaces_groups_but_keeps_the_fallback_name() {
     let dir = tempfile::tempdir().unwrap();
-    let configured = Grouping { groups: group::default_groups(), other: "Misc".into() };
+    let configured = Grouping { other: "Misc".into(), ..Grouping::default() };
     assert_eq!(configured.for_repo(dir.path()), (configured.clone(), None));
     std::fs::write(dir.path().join(".structdiff.json"), r#"{"groups":[{"name":"Migrations","patterns":["^db/"]}]}"#).unwrap();
     let (repo, _) = configured.for_repo(dir.path());
@@ -89,4 +89,39 @@ fn repo_config_replaces_groups_but_keeps_the_fallback_name() {
     let (fallback, warning) = configured.for_repo(dir.path());
     assert_eq!(fallback, configured);
     assert!(warning.unwrap().starts_with("ignoring invalid"));
+}
+
+#[test]
+fn display_order_is_separate_from_match_order() {
+    let mut g: Vec<Group> = ["Tests", "CI", "Docs", "Source", "Other", "Assets"]
+        .iter()
+        .map(|n| Group { name: (*n).into(), files: files(&[&n.to_lowercase()]) })
+        .collect();
+    // Assets is unlisted: after the listed groups, before the fallback.
+    group::sort_display(&mut g, &["Source".into(), "Tests".into(), "Docs".into(), "CI".into()], "Other");
+    assert_eq!(order(&g), ["Source", "Tests", "Docs", "CI", "Assets", "Other"]);
+    // Naming the fallback places it explicitly.
+    group::sort_display(&mut g, &["Other".into(), "Source".into()], "Other");
+    assert_eq!(order(&g), ["Other", "Source", "Tests", "Docs", "CI", "Assets"]);
+}
+
+#[test]
+fn repo_config_can_set_the_display_order() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".structdiff.json"),
+        r#"{"groups":[{"name":"A","patterns":["a"]},{"name":"B","patterns":["b"]}],"display_order":["B","A"]}"#,
+    )
+    .unwrap();
+    let (g, _) = Grouping::default().for_repo(dir.path());
+    assert_eq!(g.display, ["B", "A"]);
+    // Without display_order, the configured one is kept.
+    std::fs::write(dir.path().join(".structdiff.json"), r#"{"groups":[{"name":"A","patterns":["a"]}]}"#).unwrap();
+    assert_eq!(Grouping::default().for_repo(dir.path()).0.display, group::default_display_order());
+}
+
+#[test]
+fn groups_json_without_display_order_still_parses() {
+    let g: Grouping = serde_json::from_str(r#"{"groups":[],"other":"Other"}"#).unwrap();
+    assert_eq!(g.display, group::default_display_order());
 }
