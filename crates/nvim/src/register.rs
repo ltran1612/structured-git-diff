@@ -112,12 +112,14 @@ pub fn init() -> nvim_oxi::Result<Dictionary> {
     command("StructDiffRefresh", "Re-scan changes and reload the narrative", actions::refresh)?;
     command("StructDiffNarrative", "Toggle the narrative split", actions::toggle_narrative)?;
     range_command("StructDiffGenerate", "Generate the change narrative with Claude: [range]", generate::generate)?;
+    command("StructDiffCancel", "Stop a running :StructDiffGenerate", generate::cancel_generate)?;
     hl::apply();
 
     Ok(Dictionary::from_iter([
         ("setup", lua_fn(setup)),
         ("open", lua_fn(actions::open)),
         ("generate", lua_fn(generate::generate)),
+        ("cancel_generate", lua_fn(|(): ()| generate::cancel_generate())),
         ("close", lua_fn(|(): ()| actions::close())),
         ("refresh", lua_fn(|(): ()| actions::refresh())),
         ("reload_narrative", lua_fn(|(): ()| actions::reload_narrative())),

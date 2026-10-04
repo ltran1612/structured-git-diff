@@ -390,3 +390,84 @@ fn moving_into_a_folded_group_unfolds_it() {
     assert!(panel().contains(&"  D README.md".to_owned()));
     structdiff::close();
 }
+
+/// Configure generate_cmd as a shell script run from the repo root.
+fn generate_with(script: &str, timeout_secs: u64) {
+    let opts = api::call_function::<_, nvim_oxi::Object>(
+        "luaeval",
+        (
+            "{ generate_cmd = { 'sh', '-c', _A[1] }, generate_timeout = _A[2] }",
+            nvim_oxi::Array::from_iter([nvim_oxi::Object::from(script), nvim_oxi::Object::from(timeout_secs as i64)]),
+        ),
+    )
+    .unwrap();
+    structdiff::setup(opts);
+}
+
+fn process_alive(pid: &str) -> bool {
+    std::process::Command::new("kill").args(["-0", pid.trim()]).status().unwrap().success()
+}
+
+fn generating() -> bool {
+    structdiff::with_view(|v| v.generating()).unwrap_or(false) || structdiff::busy()
+}
+
+// The command backgrounds a grandchild `sleep` and records its pid, so the
+// test can check the whole process group was stopped.
+const SLOW: &str = "sleep 30 & echo $! > .structdiff/sleep.pid; wait";
+
+#[nvim_oxi::test]
+fn cancel_stops_the_command_and_its_children() {
+    let r = sample_repo();
+    start(&r.root);
+    generate_with(SLOW, 0);
+    open_wait(None);
+    capture_notifications();
+    structdiff::generate(None);
+    let pid_file = r.root.join(".structdiff/sleep.pid");
+    assert!(wait_until(5000, || std::fs::read_to_string(&pid_file).is_ok_and(|p| !p.trim().is_empty())));
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    assert!(process_alive(&pid));
+    structdiff::cancel_generate();
+    assert!(wait_until(5000, || !generating()), "generation did not stop");
+    assert!(notifications().iter().any(|m| m.contains("narrative generation cancelled")), "{:?}", notifications());
+    assert!(!process_alive(&pid), "the command's child process survived");
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn generation_times_out() {
+    let r = sample_repo();
+    start(&r.root);
+    generate_with(SLOW, 1);
+    open_wait(None);
+    capture_notifications();
+    structdiff::generate(None);
+    assert!(wait_until(6000, || !generating()), "generation did not time out");
+    assert!(notifications().iter().any(|m| m.contains("timed out after 1s")), "{:?}", notifications());
+    let pid = std::fs::read_to_string(r.root.join(".structdiff/sleep.pid")).unwrap();
+    assert!(!process_alive(&pid));
+    structdiff::close();
+}
+
+#[nvim_oxi::test]
+fn cancel_without_a_generation_says_so() {
+    let r = sample_repo();
+    start(&r.root);
+    capture_notifications();
+    structdiff::cancel_generate();
+    assert_eq!(notifications(), ["structdiff: no narrative generation is running"]);
+}
+
+#[nvim_oxi::test]
+fn background_jobs_are_all_handled() {
+    let r = sample_repo();
+    start(&r.root);
+    open_wait(None);
+    for _ in 0..20 {
+        structdiff::refresh();
+    }
+    assert!(wait_until(10000, || !structdiff::busy()));
+    assert_eq!(structdiff::background_jobs(), 0);
+    structdiff::close();
+}

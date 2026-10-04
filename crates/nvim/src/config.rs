@@ -67,6 +67,9 @@ pub struct Config {
     pub sidebar_width: u32,
     pub narrative_height: u32,
     pub show_reasons: bool,
+    /// Seconds before :StructDiffGenerate gives up and stops the command;
+    /// 0 waits forever.
+    pub generate_timeout: u64,
     /// Run by :StructDiffGenerate from the repo root. "{range}" becomes the
     /// range spec ("" for the working tree).
     pub generate_cmd: Vec<String>,
@@ -81,6 +84,7 @@ impl Default for Config {
             sidebar_width: 40,
             narrative_height: 15,
             show_reasons: true,
+            generate_timeout: 600,
             generate_cmd: [
                 "claude",
                 "-p",

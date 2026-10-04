@@ -42,7 +42,7 @@ lazy.nvim:
   "…/structdiff.nvim", -- or dir = "~/path/to/organizeddiffview"
   main = "structdiff",
   build = "./build.sh",
-  cmd = { "StructDiff", "StructDiffClose", "StructDiffRefresh", "StructDiffNarrative", "StructDiffGenerate" },
+  cmd = { "StructDiff", "StructDiffClose", "StructDiffRefresh", "StructDiffNarrative", "StructDiffGenerate", "StructDiffCancel" },
   keys = { { "<leader>gv", "<cmd>StructDiff<cr>", desc = "StructDiff" } },
   opts = {},
 }
@@ -66,6 +66,7 @@ ln -s /path/to/organizeddiffview/skill/diff-narrative ~/.claude/skills/diff-narr
 |---|---|
 | `:StructDiff [range]` | Open the view (or refresh it if it's already open with the same range) |
 | `:StructDiffGenerate [range]` | Run the skill through `claude -p` for that range, and reload when it finishes |
+| `:StructDiffCancel` | Stop a running `:StructDiffGenerate` |
 | `:StructDiffNarrative` | Toggle the narrative split |
 | `:StructDiffRefresh` | Re-scan git and reload the narrative |
 | `:StructDiffClose` | Close the view |
@@ -85,7 +86,7 @@ The real file on the right only gets the `]g [g ]f [f` keys, and only while it's
 
 You can also run `/diff-narrative [range]` in any Claude Code session in the repo. The open view checks the narrative file every 300ms and reloads as soon as it changes.
 
-If you quit Neovim while `:StructDiffGenerate` is running, the `claude` run keeps going and still writes the narrative. The next `:StructDiff` on that range picks it up.
+`:StructDiffGenerate` gives up after `generate_timeout` seconds (default 600), and `:StructDiffCancel` stops it sooner. Either way the command and anything it started are stopped. On Linux it's also stopped if you quit Neovim; on other systems it keeps running, and the next `:StructDiff` on that range picks up whatever it writes.
 
 ## Ranges
 
@@ -164,6 +165,7 @@ opts = {
   sidebar_width = 40,
   narrative_height = 15,
   show_reasons = true,
+  generate_timeout = 600,  -- seconds; 0 waits forever
   -- "{range}" is replaced by the range ("" for the working tree)
   generate_cmd = { "claude", "-p", "/diff-narrative {range}", "--permission-mode", "acceptEdits",
                    "--allowedTools", "Bash(git:*)", "Read", "Write" },

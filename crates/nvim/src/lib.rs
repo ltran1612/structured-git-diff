@@ -50,7 +50,12 @@ pub use actions::{
     close, fold_at_cursor, goto_file, goto_group, open, refresh, reload_narrative, select_at_cursor,
     toggle_narrative, toggle_reasons,
 };
-pub use generate::generate;
+pub use generate::{cancel_generate, generate};
+
+/// Background jobs whose results haven't been handled yet (for tests).
+pub fn background_jobs() -> usize {
+    bg::pending()
+}
 pub use register::{TESTED_NEOVIM, check_neovim, init, setup};
 pub use state::{busy, config, with_view};
 

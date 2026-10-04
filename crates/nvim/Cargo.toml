@@ -11,3 +11,6 @@ crate-type = ["cdylib", "rlib"]
 nvim-oxi = { workspace = true, features = ["neovim-0-12", "libuv"] }
 structdiff-core = { workspace = true }
 serde = { version = "1", features = ["derive"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
