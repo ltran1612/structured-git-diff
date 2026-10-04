@@ -1,0 +1,8 @@
+# nvim-oxi bindings that don't match Neovim 0.12.5 (see the compatibility
+# notes at the top of crates/nvim/src/lib.rs). Calling them misaligns option
+# structs or corrupts the heap, so `cargo clippy` rejects them.
+disallowed-methods = [
+    { path = "nvim_oxi::api::create_autocmd", reason = "CreateAutocmdOpts is misaligned on Neovim 0.12.5 (it lacks `buf`); poll in the watcher timer instead" },
+    { path = "nvim_oxi::api::set_hl", reason = "SetHighlightOpts doesn't match Neovim 0.12.5's Dict(highlight); use `:highlight` via api::command" },
+    { path = "nvim_oxi::api::list_tabpages", reason = "omits the Arena* that nvim_list_tabpages takes on 0.12.5 and corrupts the heap; use ui::tab_count()" },
+]

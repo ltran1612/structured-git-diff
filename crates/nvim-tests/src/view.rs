@@ -261,3 +261,14 @@ fn overlapping_refreshes_apply_only_the_latest() {
     assert_eq!(structdiff::with_view(|v| v.model.file_count()), Some(5));
     structdiff::close();
 }
+
+#[nvim_oxi::test]
+fn version_guard_is_an_exact_allowlist_with_an_explicit_opt_out() {
+    assert_eq!(structdiff::check_neovim(structdiff::TESTED_NEOVIM), Ok(()));
+    // Same minor, different patch: rejected, since nvim-oxi broke within 0.12.
+    let err = structdiff::check_neovim(&[(0, 12, 4)]).unwrap_err();
+    assert!(err.contains("built and checked for Neovim 0.12.4"), "{err}");
+    assert!(err.contains("structdiff_allow_untested_nvim"), "{err}");
+    api::set_var("structdiff_allow_untested_nvim", true).unwrap();
+    assert_eq!(structdiff::check_neovim(&[(0, 12, 4)]), Ok(()));
+}

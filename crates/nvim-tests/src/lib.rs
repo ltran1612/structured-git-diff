@@ -4,5 +4,7 @@
 //! No `#[cfg(test)]` here: the harness builds this crate as a plain cdylib
 //! and loads each test's entry point from it.
 
+#![deny(clippy::disallowed_methods)]
+
 mod helpers;
 mod view;

@@ -29,7 +29,7 @@ A grouped view of your working-tree diff for Neovim, with an AI-written narrativ
 
 ## Requirements
 
-- **Neovim 0.12.x.** The plugin binds Neovim's C API directly and refuses to load on other versions (see [Compatibility](#compatibility)).
+- **Neovim 0.12.5.** The plugin binds Neovim's C API directly and only loads on Neovim versions it was checked against (see [Compatibility](#compatibility)).
 - A Rust toolchain (`cargo`) to build it, and git.
 - For narratives, [Claude Code](https://claude.com/claude-code).
 
@@ -178,9 +178,10 @@ Highlight groups (all `default` links, so you can override them): `StructDiffTit
 ## Tests
 
 ```sh
-cargo test -p structdiff-core          # logic: git, ranges, grouping, narrative
-cargo test -p structdiff-nvim-tests    # the view, inside Neovim (needs nvim 0.12 on PATH)
+./check.sh
 ```
+
+This runs strict clippy (`-D warnings`, which includes the ban on broken nvim-oxi bindings), the core tests, and the tests that run inside Neovim (they need the supported Neovim on `PATH`).
 
 ## Compatibility
 
@@ -192,4 +193,9 @@ nvim-oxi is pinned to an upstream commit with the `neovim-0-12` feature, which p
 | `api::set_hl` | `Dict(highlight)` was reordered and extended | `:highlight default link`, re-applied on every redraw (survives colorscheme changes) |
 | `api::list_tabpages` | `nvim_list_tabpages` now takes an `Arena*`; calling it corrupts the heap | `tabpagenr('$')` |
 
-The details are in the doc comment at the top of `crates/nvim/src/lib.rs`. Before moving to a new nvim-oxi or Neovim version, re-check every binding the plugin uses, then widen the version check in `init()`.
+Two guards keep this from happening again:
+
+- **Exact version allowlist.** `TESTED_NEOVIM` in `crates/nvim/src/lib.rs` lists the exact versions checked (currently 0.12.5). These bindings broke within the 0.12 series, so a newer 0.12.x is rejected too. On any other version the plugin shows an error and does nothing. If you accept the risk, set `vim.g.structdiff_allow_untested_nvim = true` before it loads.
+- **Compile-time ban.** `clippy.toml` lists the three bindings as `disallowed-methods`, and the plugin crate denies that lint, so `./check.sh` fails if anyone calls them.
+
+The details are in the doc comment at the top of `crates/nvim/src/lib.rs`. Before supporting a new Neovim or nvim-oxi version, re-check every binding the plugin uses against that version's sources, then add it to `TESTED_NEOVIM`.
