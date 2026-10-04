@@ -24,6 +24,13 @@ If you have no history of these changes (you were started just to write this nar
 
 **Run this last:** after your final edit, and after committing if you commit. The narrative is tied to the exact diff, so any later change marks it stale in the viewer.
 
+**Pick the range that holds your changes.** With no range, only uncommitted work is covered, so once you've committed, an empty range finds nothing to narrate. If you were given a range, use it. Otherwise:
+- changes left uncommitted: no range;
+- changes committed on a branch: `<base>...`, where `<base>` is the branch it will merge into (usually `main...`);
+- commits made directly on the main branch: `HEAD~N..HEAD`, where N is the number of commits you made.
+
+If `structdiff export` reports a change set with no files (or `git diff` for the range is empty), you picked the wrong range: choose again rather than writing an empty narrative.
+
 ## 1. Work out the range and output file
 
 Run everything from the repo root (`git rev-parse --show-toplevel`). The range argument (possibly empty) picks what to explain:
