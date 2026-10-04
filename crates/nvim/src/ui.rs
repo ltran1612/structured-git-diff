@@ -43,6 +43,22 @@ pub fn set_lines(buf: &mut Buffer, lines: &[String]) {
     buf_opt(buf, "modified", false);
 }
 
+/// A scratch buffer named `name`. A leftover buffer with that name (say,
+/// one a `:mksession` restore loaded) is reused and reset: naming a new
+/// buffer after a loaded one fails with E95.
+pub fn named_buffer(name: &str) -> Result<Buffer, api::Error> {
+    if let Some(mut buf) = find_buf(name) {
+        buf_opt(&buf, "buftype", "nofile");
+        buf_opt(&buf, "swapfile", false);
+        buf_opt(&buf, "modifiable", true);
+        buf.set_lines(.., false, std::iter::empty::<&str>())?;
+        return Ok(buf);
+    }
+    let mut buf = api::create_buf(false, true)?;
+    buf.set_name(name)?;
+    Ok(buf)
+}
+
 /// A read-only scratch buffer named `name`, reused if it already exists.
 /// Wiped once no window shows it.
 pub fn scratch(name: &str, lines: &[String], path: Option<&str>) -> Buffer {

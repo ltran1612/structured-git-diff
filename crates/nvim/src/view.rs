@@ -103,8 +103,18 @@ impl View {
         api::command("tabnew")?;
         let tab = api::get_current_tabpage();
         ui::buf_opt(&api::get_current_buf(), "bufhidden", "wipe");
-        let mut panel_buf = api::create_buf(false, true)?;
-        panel_buf.set_name("structdiff://panel")?;
+        let built = Self::build(model, cfg, tab.clone());
+        if built.is_err() && tab.is_valid() {
+            // Don't leave an empty tab behind.
+            if let Ok(n) = tab.get_number() {
+                let _ = api::command(&format!("tabclose {n}"));
+            }
+        }
+        built
+    }
+
+    fn build(model: Model, cfg: &Config, tab: TabPage) -> Result<Self, api::Error> {
+        let panel_buf = ui::named_buffer("structdiff://panel")?;
         ui::buf_opt(&panel_buf, "bufhidden", "hide");
         ui::buf_opt(&panel_buf, "modifiable", false);
         ui::buf_opt(&panel_buf, "filetype", "structdiff");
@@ -551,8 +561,7 @@ impl View {
         }
         let mut created = None;
         if !self.narrative_buf.as_ref().is_some_and(Buffer::is_valid) {
-            let mut buf = api::create_buf(false, true)?;
-            buf.set_name("structdiff://narrative")?;
+            let buf = ui::named_buffer("structdiff://narrative")?;
             ui::buf_opt(&buf, "bufhidden", "hide");
             ui::buf_opt(&buf, "filetype", "markdown");
             created = Some(buf.clone());

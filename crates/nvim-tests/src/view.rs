@@ -746,3 +746,23 @@ fn a_leftover_background_process_does_not_hang_generation() {
     assert!(wait_until(3000, || !process_alive(&pid)), "the leftover process was left running");
     structdiff::close();
 }
+
+#[nvim_oxi::test]
+fn opening_works_after_a_session_restored_our_buffers() {
+    let r = sample_repo();
+    start(&r.root);
+    // what :mksession + :source leaves behind: loaded buffers with our names
+    api::command("badd structdiff://panel | badd structdiff://narrative").unwrap();
+    for name in ["structdiff://panel", "structdiff://narrative"] {
+        let _: nvim_oxi::Object = api::call_function("bufload", (name,)).unwrap();
+    }
+    let tabs = structdiff::ui::tab_count();
+    capture_notifications();
+    open_wait(None);
+    assert!(structdiff::with_view(|_| ()).is_some(), "{:?}", notifications());
+    assert_eq!(panel()[0], " StructDiff  4 files");
+    structdiff::toggle_narrative();
+    assert_eq!(structdiff::with_view(|v| v.narrative_open()), Some(true));
+    structdiff::close();
+    assert_eq!(structdiff::ui::tab_count(), tabs, "a tab leaked");
+}
