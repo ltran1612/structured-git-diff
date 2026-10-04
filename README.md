@@ -43,7 +43,7 @@ lazy.nvim:
   name = "structdiff.nvim",
   main = "structdiff",
   build = "./build.sh",
-  cmd = { "StructDiff", "StructDiffClose", "StructDiffRefresh", "StructDiffNarrative", "StructDiffGenerate", "StructDiffCancel" },
+  cmd = { "StructDiff", "StructDiffClose", "StructDiffRefresh", "StructDiffNarrative" },
   keys = { { "<leader>gv", "<cmd>StructDiff<cr>", desc = "StructDiff" } },
   opts = {},
 }
@@ -85,8 +85,6 @@ Both skills work without the plugin. With the `structdiff` command on `PATH` (`.
 | Command | |
 |---|---|
 | `:StructDiff [range]` | Open the view (or refresh it if it's already open with the same range) |
-| `:StructDiffGenerate [range]` | Fallback: have an agent CLI (Claude, Codex or Copilot) write the narrative for that range, and reload when it finishes |
-| `:StructDiffCancel` | Stop a running `:StructDiffGenerate` |
 | `:StructDiffNarrative` | Toggle the narrative split |
 | `:StructDiffRefresh` | Re-scan git and reload the narrative |
 | `:StructDiffClose` | Close the view |
@@ -110,19 +108,9 @@ The viewer only reads `.structdiff/narrative*.json`; it never talks to an AI its
 
 **Best: the agent that made the changes writes it.** When an agent finishes a change, it runs `/diff-narrative [range]` (the skill in `skill/diff-narrative`). That agent knows the request, the decisions and the alternatives it rejected, which no one reading the diff later can recover.
 
-**Fallback: `:StructDiffGenerate`** is for changes nobody narrated, such as your own edits, someone else's branch, or a session that's gone. It starts a fresh agent that reconstructs the "why" from the diff, the commit messages and the surrounding code.
+**Otherwise, ask any agent.** For changes nobody narrated (your own edits, someone else's branch, a session that's gone), run `/diff-narrative [range]` in a Claude Code, Codex or Copilot session in the repo. The same skill then reconstructs the "why" from the diff, the commit messages and the surrounding code, and says when a reason can't be inferred.
 
-Because that might be someone else's branch, the agent is treated as untrusted: it can read the checkout, but it can't run commands or write anything. structdiff gathers the evidence itself (the changed files, the commit messages, the diff up to about 90 KB, untracked files' contents) and puts it in the prompt, marked as data rather than instructions. The agent replies with the narrative as JSON. structdiff then checks the reply, drops anything about files outside the change set, sets the fingerprint itself and writes the file. A prompt injection in the branch can at worst produce a misleading narrative. Pick the agent CLI with `generator`:
-
-| `generator` | Runs | What the agent can do |
-|---|---|---|
-| `"claude"` (default) | `claude -p --restricted --strict-mcp-config --tools Read,Grep,Glob --permission-mode dontAsk` | read files only. `--restricted` also ignores the checkout's settings files, so a branch's `.claude/settings.json` hooks don't run, and `--strict-mcp-config` skips its `.mcp.json` servers |
-| `"codex"` | `codex exec --sandbox read-only --ephemeral` | run commands in a read-only sandbox with no network |
-| `"copilot"` | `copilot -p -s --no-ask-user` | nothing that needs approval (no tool grants) |
-
-To run something else, set `generate_cmd` to a full command; it overrides `generator`. In it, `{prompt}` becomes the prompt above, `{range}` the range, and `{output}` the narrative file's path. The command should print the narrative JSON. A command that writes `{output}` itself also works: it then gets `.structdiff/groups.json` as for the skill. Either way, it runs with your permissions, so only use commands you trust.
-
-`:StructDiffGenerate` gives up after `generate_timeout` seconds (default 600), and `:StructDiffCancel` stops it sooner. Either way the command and anything it started are stopped. On Linux it's also stopped if you quit Neovim; on other systems it keeps running, and the next `:StructDiff` on that range picks up whatever it writes.
+The plugin never starts an agent itself. Whatever writes the narrative runs in a session you started, with that agent's own permissions and prompts. Keep that in mind on an untrusted branch, since the agent reads the branch's code and commit messages.
 
 ## Ranges
 
@@ -166,9 +154,9 @@ Once a narrative exists, its reading order wins: the group holding the story's f
 
 ## The narrative contract
 
-Everything lives in `<repo>/.structdiff/`. Viewing a diff writes nothing to your repo. structdiff itself creates the directory only in `:StructDiffGenerate` and `structdiff export`, and both add it to `.git/info/exclude` (best effort), so it doesn't show up in `git status`. The skills create it through `structdiff export` when it's installed. An agent without `structdiff` may create it unexcluded; add `/.structdiff/` to `.gitignore` if that bothers you.
+Everything lives in `<repo>/.structdiff/`. Viewing a diff writes nothing to your repo. structdiff itself creates the directory only in `structdiff export`, which adds it to `.git/info/exclude` (best effort), so it doesn't show up in `git status`. The skills create it through `structdiff export` when it's installed. An agent without `structdiff` may create it unexcluded; add `/.structdiff/` to `.gitignore` if that bothers you.
 
-- `groups.json` (written by `structdiff export`, which the skill runs first, and by `:StructDiffGenerate`): the range (`spec`, resolved `base`/`target` SHAs), the `output` file name, the groups and their files, a `fingerprint` of the change set, and the `grouping` (patterns) that produced the groups.
+- `groups.json` (written by `structdiff export`, which the skill runs first): the range (`spec`, resolved `base`/`target` SHAs), the `output` file name, the groups and their files, a `fingerprint` of the change set, and the `grouping` (patterns) that produced the groups.
 - `narrative.json` for the working tree, or `narrative-<range>.json` for a range. An empty side of `..` or `...` is written as `HEAD`, so `main...` and `main...HEAD` share one file, and characters outside `A-Za-z0-9._-` become `_` (`origin/main...` → `narrative-origin_main...HEAD.json`). The skill writes it in this shape:
 
 ```json
@@ -207,16 +195,13 @@ opts = {
   narrative_height = 15,
   show_reasons = true,
   display_order = { "Source", "Tests", "Docs", "Config/Build", "CI" },
-  generator = "claude",    -- fallback agent: "claude", "codex" or "copilot"
-  generate_cmd = {},       -- optional full override; {prompt}, {range}, {output} are filled in
-  generate_timeout = 600,  -- seconds; 0 waits forever
   keymaps = { next_group = "]g", prev_group = "[g", next_file = "]f", prev_file = "[f",
               select = "<CR>", toggle_fold = { "za", "<Tab>" }, toggle_narrative = "gn",
               toggle_reasons = "gr", refresh = "R", close = "q" },
 }
 ```
 
-Options you don't set keep their defaults. Lists such as `groups` and `generate_cmd` replace the default list rather than merging with it.
+Options you don't set keep their defaults. Lists such as `groups` and `display_order` replace the default list rather than merging with it.
 
 Highlight groups (all `default` links, so you can override them): `StructDiffTitle`, `StructDiffRange`, `StructDiffGroup`, `StructDiffCount`, `StructDiffDir`, `StructDiffReason`, `StructDiffWhy`, `StructDiffCurrent`, `StructDiffAdded`, `StructDiffChanged`, `StructDiffRemoved`, `StructDiffFresh`, `StructDiffStale`, `StructDiffNone`.
 

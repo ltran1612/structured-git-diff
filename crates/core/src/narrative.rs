@@ -189,40 +189,8 @@ impl Narrative {
         })
     }
 
-    /// Parse an agent's reply: a JSON object, possibly wrapped in a code fence
-    /// or surrounded by stray text.
-    pub fn parse_reply(text: &str) -> Result<Self, &'static str> {
-        let start = text.find('{').ok_or("no JSON object in the reply")?;
-        let end = text.rfind('}').ok_or("no JSON object in the reply")?;
-        if end < start {
-            return Err("no JSON object in the reply");
-        }
-        let value: Value = serde_json::from_str(&text[start..=end]).map_err(|_| "the reply's JSON is invalid")?;
-        Self::from_value(&value)
-    }
 
-    /// The narrative-file JSON for this narrative.
-    pub fn to_json(&self) -> String {
-        let value = serde_json::json!({
-            "version": VERSION,
-            "fingerprint": self.fingerprint,
-            "overall": self.overall,
-            "groups": self.groups,
-            "files": self.files,
-            "order": self.order,
-        });
-        serde_json::to_string_pretty(&value).expect("plain JSON values serialize")
-    }
 
-    /// Write this narrative as `spec`'s narrative file, creating
-    /// `.structdiff/` (and excluding it from git, best effort) if needed.
-    pub fn save(&self, repo: &Repo, spec: &str) -> Result<PathBuf> {
-        let _ = ensure_excluded(&repo.exclude);
-        let path = path(&repo.root, spec);
-        writable_dir(&repo.root).map_err(|source| Error::Io { path: dir(&repo.root), source })?;
-        std::fs::write(&path, self.to_json()).map_err(|source| Error::Io { path: path.clone(), source })?;
-        Ok(path)
-    }
 
     /// Ok(None) when there is no narrative for this range yet.
     pub fn load(root: &Path, spec: &str) -> Result<Option<Self>> {
@@ -263,7 +231,8 @@ pub fn render(narrative: Option<&Narrative>, groups: &[Group], state: State, spe
     match state {
         State::Stale => {
             lines.push(String::new());
-            lines.push("> **Stale:** the diff changed since this was written. Run `:StructDiffGenerate`.".into());
+            let cmd = format!("/diff-narrative {spec}");
+            lines.push(format!("> **Stale:** the diff changed since this was written. Ask your agent to run `{}` again.", cmd.trim()));
         }
         State::Unverified => {
             lines.push(String::new());
@@ -274,7 +243,7 @@ pub fn render(narrative: Option<&Narrative>, groups: &[Group], state: State, spe
     let Some(n) = narrative else {
         lines.push(String::new());
         let cmd = format!("/diff-narrative {spec}");
-        lines.push(format!("No narrative yet. Run `:StructDiffGenerate`, or `{}` in your agent.", cmd.trim()));
+        lines.push(format!("No narrative yet. Ask your agent to run `{}`.", cmd.trim()));
         return lines;
     };
     if !n.overall.is_empty() {

@@ -64,7 +64,6 @@ pub struct View {
     real_buf: Option<Buffer>,
     /// The real buffer's own maps that structdiff's navigation keys replaced.
     real_maps: ui::SavedMaps,
-    generating: bool,
     watcher: Option<TimerHandle>,
     /// Bumped per background rescan; only the latest result is applied.
     scan_gen: u64,
@@ -134,7 +133,6 @@ impl View {
             line_items: Vec::new(),
             real_buf: None,
             real_maps: ui::SavedMaps::default(),
-            generating: false,
             watcher: None,
             scan_gen: 0,
             pending_scans: 0,
@@ -205,15 +203,6 @@ impl View {
     /// Remember the maps structdiff replaced on the real buffer.
     pub fn set_real_maps(&mut self, maps: ui::SavedMaps) {
         self.real_maps = maps;
-    }
-
-    pub fn generating(&self) -> bool {
-        self.generating
-    }
-
-    pub fn set_generating(&mut self, on: bool) {
-        self.generating = on;
-        self.panel_dirty = true;
     }
 
     pub fn set_watcher(&mut self, watcher: Option<TimerHandle>) {
@@ -421,15 +410,11 @@ impl View {
         marks.push(Mark::Hl { row, start: 0, end: lines[row].len(), group: "StructDiffTitle" });
         let row = add(format!(" {}", self.model.range.describe()), Item::Header, &mut lines);
         marks.push(Mark::Hl { row, start: 0, end: lines[row].len(), group: "StructDiffRange" });
-        let (label, hl) = if self.generating {
-            ("generating narrative…", "StructDiffStale")
-        } else {
-            match self.model.state {
-                State::None => ("no narrative · :StructDiffGenerate", "StructDiffNone"),
-                State::Fresh => ("narrative up to date", "StructDiffFresh"),
-                State::Stale => ("narrative stale · :StructDiffGenerate", "StructDiffStale"),
-                State::Unverified => ("narrative (unverified)", "StructDiffStale"),
-            }
+        let (label, hl) = match self.model.state {
+            State::None => ("no narrative · /diff-narrative", "StructDiffNone"),
+            State::Fresh => ("narrative up to date", "StructDiffFresh"),
+            State::Stale => ("narrative stale · /diff-narrative", "StructDiffStale"),
+            State::Unverified => ("narrative (unverified)", "StructDiffStale"),
         };
         let row = add(format!(" {label}"), Item::Header, &mut lines);
         marks.push(Mark::Hl { row, start: 0, end: lines[row].len(), group: hl });

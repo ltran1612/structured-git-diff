@@ -103,33 +103,6 @@ fn watcher_reloads_when_the_narrative_file_is_written() {
 }
 
 #[nvim_oxi::test]
-fn generate_runs_the_command_in_the_background_and_reloads() {
-    let r = sample_repo();
-    start(&r.root);
-    // Stand-in for claude: echo the range it was given into the narrative.
-    let script = r#"printf '{"overall":"generated for [%s]"}' "$1" > .structdiff/narrative.json"#;
-    let opts = api::call_function::<_, nvim_oxi::Object>(
-        "luaeval",
-        ("{ generate_cmd = { 'sh', '-c', _A, 'sh', '{range}' } }", script),
-    )
-    .unwrap();
-    structdiff::setup(opts);
-    open_wait(None);
-    structdiff::generate(None);
-    assert_eq!(structdiff::with_view(|v| v.generating()), Some(true));
-    assert_eq!(panel()[2], " generating narrative…");
-    assert!(wait_until(5000, || {
-        structdiff::with_view(|v| !v.generating()).unwrap_or(false) && !structdiff::busy()
-    }));
-    let overall = structdiff::with_view(|v| v.model().narrative.as_ref().map(|n| n.overall.clone())).flatten();
-    assert_eq!(overall.as_deref(), Some("generated for []"));
-    assert_eq!(structdiff::with_view(|v| v.narrative_open()), Some(true));
-    // generating is what exports groups.json for the skill
-    assert!(r.root.join(".structdiff/groups.json").exists());
-    structdiff::close();
-}
-
-#[nvim_oxi::test]
 fn branch_range_uses_read_only_revisions_and_its_own_narrative() {
     let r = branch_repo();
     start(&r.root);
@@ -391,74 +364,6 @@ fn moving_into_a_folded_group_unfolds_it() {
     structdiff::close();
 }
 
-/// Configure generate_cmd as a shell script run from the repo root.
-fn generate_with(script: &str, timeout_secs: u64) {
-    let opts = api::call_function::<_, nvim_oxi::Object>(
-        "luaeval",
-        (
-            "{ generate_cmd = { 'sh', '-c', _A[1] }, generate_timeout = _A[2] }",
-            nvim_oxi::Array::from_iter([nvim_oxi::Object::from(script), nvim_oxi::Object::from(timeout_secs as i64)]),
-        ),
-    )
-    .unwrap();
-    structdiff::setup(opts);
-}
-
-fn process_alive(pid: &str) -> bool {
-    std::process::Command::new("kill").args(["-0", pid.trim()]).status().unwrap().success()
-}
-
-fn generating() -> bool {
-    structdiff::with_view(|v| v.generating()).unwrap_or(false) || structdiff::busy()
-}
-
-// The command backgrounds a grandchild `sleep` and records its pid, so the
-// test can check the whole process group was stopped.
-const SLOW: &str = "sleep 30 & echo $! > .structdiff/sleep.pid; wait";
-
-#[nvim_oxi::test]
-fn cancel_stops_the_command_and_its_children() {
-    let r = sample_repo();
-    start(&r.root);
-    generate_with(SLOW, 0);
-    open_wait(None);
-    capture_notifications();
-    structdiff::generate(None);
-    let pid_file = r.root.join(".structdiff/sleep.pid");
-    assert!(wait_until(5000, || std::fs::read_to_string(&pid_file).is_ok_and(|p| !p.trim().is_empty())));
-    let pid = std::fs::read_to_string(&pid_file).unwrap();
-    assert!(process_alive(&pid));
-    structdiff::cancel_generate();
-    assert!(wait_until(5000, || !generating()), "generation did not stop");
-    assert!(notifications().iter().any(|m| m.contains("narrative generation cancelled")), "{:?}", notifications());
-    assert!(!process_alive(&pid), "the command's child process survived");
-    structdiff::close();
-}
-
-#[nvim_oxi::test]
-fn generation_times_out() {
-    let r = sample_repo();
-    start(&r.root);
-    generate_with(SLOW, 1);
-    open_wait(None);
-    capture_notifications();
-    structdiff::generate(None);
-    assert!(wait_until(6000, || !generating()), "generation did not time out");
-    assert!(notifications().iter().any(|m| m.contains("timed out after 1s")), "{:?}", notifications());
-    let pid = std::fs::read_to_string(r.root.join(".structdiff/sleep.pid")).unwrap();
-    assert!(!process_alive(&pid));
-    structdiff::close();
-}
-
-#[nvim_oxi::test]
-fn cancel_without_a_generation_says_so() {
-    let r = sample_repo();
-    start(&r.root);
-    capture_notifications();
-    structdiff::cancel_generate();
-    assert_eq!(notifications(), ["structdiff: no narrative generation is running"]);
-}
-
 #[nvim_oxi::test]
 fn background_jobs_are_all_handled() {
     let r = sample_repo();
@@ -469,71 +374,6 @@ fn background_jobs_are_all_handled() {
     }
     assert!(wait_until(10000, || !structdiff::busy()));
     assert_eq!(structdiff::background_jobs(), 0);
-    structdiff::close();
-}
-
-#[nvim_oxi::test]
-fn generator_is_chosen_from_setup() {
-    let lua = |expr: &str| api::call_function::<_, nvim_oxi::Object>("luaeval", (expr,)).unwrap();
-    let cmd = |spec: &str| structdiff::config().generate_cmd_for(spec, "PROMPT");
-    assert_eq!(cmd("")[0], "claude"); // default
-    structdiff::setup(lua("{ generator = 'codex' }"));
-    assert_eq!(cmd("main...")[..4], ["codex", "exec", "--sandbox", "read-only"]);
-    assert_eq!(cmd("main...").last().unwrap(), "PROMPT");
-    structdiff::setup(lua("{ generator = 'copilot' }"));
-    assert_eq!(cmd("")[..3], ["copilot", "-p", "PROMPT"]);
-    // generate_cmd overrides the generator entirely
-    structdiff::setup(lua("{ generator = 'codex', generate_cmd = { 'my-agent', '{range}', '{output}' } }"));
-    assert_eq!(cmd("main.."), ["my-agent", "main..", ".structdiff/narrative-main..HEAD.json"]);
-    // an unknown generator is reported and leaves the config alone
-    capture_notifications();
-    structdiff::setup(lua("{ generator = 'gpt' }"));
-    assert_eq!(cmd("main..")[0], "my-agent");
-    assert!(notifications().iter().any(|m| m.contains("invalid setup options")), "{:?}", notifications());
-}
-
-#[nvim_oxi::test]
-fn an_agents_json_reply_becomes_a_fresh_narrative() {
-    let r = sample_repo();
-    start(&r.root);
-    // Stand-in agent: answers with JSON on stdout, including a path that
-    // isn't in the change set and a forged fingerprint.
-    let reply = r#"Sure: {"fingerprint":"forged","overall":"Adds retry.","files":{"lua/core.lua":"turns retry on","nope.txt":"x"},"order":["lua/core.lua"]}"#;
-    let opts = api::call_function::<_, nvim_oxi::Object>(
-        "luaeval",
-        ("{ generate_cmd = { 'printf', '%s', _A } }", reply),
-    )
-    .unwrap();
-    structdiff::setup(opts);
-    open_wait(None);
-    structdiff::generate(None);
-    assert!(wait_until(5000, || structdiff::with_view(|v| !v.generating()).unwrap_or(false) && !structdiff::busy()));
-    let (state, files) = structdiff::with_view(|v| {
-        let n = v.model().narrative.clone().unwrap();
-        (v.model().state, n.files.keys().cloned().collect::<Vec<_>>())
-    })
-    .unwrap();
-    assert_eq!(state, State::Fresh);
-    assert_eq!(files, ["lua/core.lua"]);
-    structdiff::close();
-}
-
-#[nvim_oxi::test]
-fn a_reply_that_is_not_a_narrative_is_reported() {
-    let r = sample_repo();
-    start(&r.root);
-    let opts = api::call_function::<_, nvim_oxi::Object>("luaeval", ("{ generate_cmd = { 'echo', 'I cannot help with that' } }",)).unwrap();
-    structdiff::setup(opts);
-    open_wait(None);
-    capture_notifications();
-    structdiff::generate(None);
-    assert!(wait_until(5000, || structdiff::with_view(|v| !v.generating()).unwrap_or(false) && !structdiff::busy()));
-    assert!(
-        notifications().iter().any(|m| m.contains("the agent's reply wasn't a narrative") && m.contains("I cannot help")),
-        "{:?}",
-        notifications()
-    );
-    assert!(!narrative::path(&r.root, "").exists());
     structdiff::close();
 }
 
@@ -578,31 +418,6 @@ fn lua_functions_tolerate_missing_arguments() {
     let goto: nvim_oxi::Function<(), ()> = nvim_oxi::conversion::FromObject::from_object(module.get("goto_file").unwrap().clone()).unwrap();
     goto.call(()).unwrap();
     assert_eq!(current().as_deref(), Some("lua/core.lua"));
-    structdiff::close();
-}
-
-#[nvim_oxi::test]
-fn only_one_generation_runs_and_cancel_always_reaches_it() {
-    let r = branch_repo();
-    start(&r.root);
-    generate_with(SLOW, 0);
-    open_wait(None);
-    capture_notifications();
-    structdiff::generate(None); // first agent, for the working tree
-    // replace the view and try to start a second generation
-    open_wait(Some("main...HEAD"));
-    structdiff::generate(None);
-    assert!(
-        notifications().iter().any(|m| m.contains("already generating a narrative for the working tree")),
-        "{:?}",
-        notifications()
-    );
-    // the new view isn't marked as generating by the old job
-    assert_eq!(structdiff::with_view(|v| v.generating()), Some(false));
-    structdiff::cancel_generate();
-    assert!(wait_until(5000, || notifications().iter().any(|m| m.contains("narrative generation cancelled"))));
-    // the old job's end leaves the new view alone
-    assert_eq!(structdiff::with_view(|v| v.model().spec.clone()).as_deref(), Some("main...HEAD"));
     structdiff::close();
 }
 
@@ -707,43 +522,6 @@ fn the_sidebar_keeps_its_panel() {
     // the user's file wasn't scrolled around in the meantime
     assert_eq!(util.get_lines(.., false).unwrap().count(), 1);
     let _ = cursor_before;
-    structdiff::close();
-}
-
-#[nvim_oxi::test]
-fn cancel_kills_children_that_ignore_sigterm() {
-    let r = sample_repo();
-    start(&r.root);
-    // the backgrounded child ignores SIGTERM
-    generate_with("(trap '' TERM; sleep 30) & echo $! > .structdiff/sleep.pid; wait", 0);
-    open_wait(None);
-    structdiff::generate(None);
-    let pid_file = r.root.join(".structdiff/sleep.pid");
-    assert!(wait_until(5000, || std::fs::read_to_string(&pid_file).is_ok_and(|p| !p.trim().is_empty())));
-    let pid = std::fs::read_to_string(&pid_file).unwrap();
-    structdiff::cancel_generate();
-    assert!(wait_until(8000, || !generating()), "generation did not stop");
-    assert!(wait_until(3000, || !process_alive(&pid)), "a TERM-ignoring child survived cancel");
-    structdiff::close();
-}
-
-#[nvim_oxi::test]
-fn a_leftover_background_process_does_not_hang_generation() {
-    let r = sample_repo();
-    start(&r.root);
-    // answers right away but leaves a process holding stdout open
-    let reply = r#"{"overall":"done","files":{},"order":[]}"#;
-    let script = format!("sleep 30 & echo $! > .structdiff/sleep.pid; printf '%s' '{reply}'");
-    generate_with(&script, 0);
-    open_wait(None);
-    capture_notifications();
-    let started = std::time::Instant::now();
-    structdiff::generate(None);
-    assert!(wait_until(10000, || !generating()), "generation hung on the leftover process");
-    assert!(started.elapsed() < std::time::Duration::from_secs(8), "{:?}", started.elapsed());
-    assert!(notifications().iter().any(|m| m.contains("narrative ready")), "{:?}", notifications());
-    let pid = std::fs::read_to_string(r.root.join(".structdiff/sleep.pid")).unwrap();
-    assert!(wait_until(3000, || !process_alive(&pid)), "the leftover process was left running");
     structdiff::close();
 }
 

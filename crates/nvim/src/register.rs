@@ -9,7 +9,7 @@ use nvim_oxi::{Dictionary, Function, Object};
 use structdiff_core::{Repo, git};
 
 use crate::config::Config;
-use crate::{actions, generate, hl, state, ui};
+use crate::{actions, hl, state, ui};
 
 /// Neovim versions whose C API this build was checked against, binding by
 /// binding (see the compatibility notes in lib.rs). nvim-oxi's bindings broke
@@ -123,15 +123,11 @@ pub fn init() -> nvim_oxi::Result<Dictionary> {
     command("StructDiffClose", "Close the StructDiff view", actions::close)?;
     command("StructDiffRefresh", "Re-scan changes and reload the narrative", actions::refresh)?;
     command("StructDiffNarrative", "Toggle the narrative split", actions::toggle_narrative)?;
-    range_command("StructDiffGenerate", "Generate the change narrative with the configured agent CLI: [range]", generate::generate)?;
-    command("StructDiffCancel", "Stop a running :StructDiffGenerate", generate::cancel_generate)?;
     hl::apply();
 
     Ok(Dictionary::from_iter([
         ("setup", lua_fn("setup", setup)),
         ("open", lua_fn("open", actions::open)),
-        ("generate", lua_fn("generate", generate::generate)),
-        ("cancel_generate", lua_fn("cancel_generate", |_: Object| generate::cancel_generate())),
         ("close", lua_fn("close", |_: Object| actions::close())),
         ("refresh", lua_fn("refresh", |_: Object| actions::refresh())),
         ("reload_narrative", lua_fn("reload_narrative", |_: Object| actions::reload_narrative())),

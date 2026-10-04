@@ -2,7 +2,7 @@
 
 use nvim_oxi::Object;
 use serde::Deserialize;
-use structdiff_core::{GroupDef, Generator, Grouping, generator, narrative};
+use structdiff_core::{GroupDef, Grouping};
 
 /// One key or several: `"]g"` or `{ "za", "<Tab>" }`.
 #[derive(Clone, Debug, Deserialize)]
@@ -68,17 +68,6 @@ pub struct Config {
     pub sidebar_width: u32,
     pub narrative_height: u32,
     pub show_reasons: bool,
-    /// Seconds before :StructDiffGenerate gives up and stops the command;
-    /// 0 waits forever.
-    pub generate_timeout: u64,
-    /// Agent CLI that :StructDiffGenerate runs when no narrative was written
-    /// by the agent that made the change: "claude", "codex" or "copilot".
-    pub generator: Generator,
-    /// Full override of the generator's command. Run from the repo root;
-    /// "{prompt}" becomes the narrative instructions, "{range}" the range
-    /// spec ("" for the working tree), "{output}" the narrative file's path
-    /// relative to the root. Empty means use `generator`'s command.
-    pub generate_cmd: Vec<String>,
     pub keymaps: Keymaps,
 }
 
@@ -92,9 +81,6 @@ impl Default for Config {
             sidebar_width: 40,
             narrative_height: 15,
             show_reasons: true,
-            generate_timeout: 600,
-            generator: Generator::default(),
-            generate_cmd: Vec::new(),
             keymaps: Keymaps::default(),
         }
     }
@@ -120,16 +106,4 @@ impl Config {
         Grouping { groups: self.groups.clone(), other: self.other_group.clone(), display: self.display_order.clone() }
     }
 
-    /// True when `generate_cmd` overrides the generator.
-    pub fn custom_generate_cmd(&self) -> bool {
-        !self.generate_cmd.is_empty()
-    }
-
-    /// The command to run for `spec` with `prompt`: `generate_cmd` if set,
-    /// otherwise the `generator`'s, with placeholders filled in.
-    pub fn generate_cmd_for(&self, spec: &str, prompt: &str) -> Vec<String> {
-        let template = if self.custom_generate_cmd() { self.generate_cmd.clone() } else { self.generator.template() };
-        let output = format!(".structdiff/{}", narrative::filename(spec));
-        generator::expand(&template, spec, &output, prompt)
-    }
 }

@@ -8,8 +8,8 @@
 //! Dependencies only point down this list:
 //!
 //! - `register`: version guard, commands, the Lua module table.
-//! - `actions`, `generate`, `watch`: the controller. What commands and keys
-//!   do, background git work, keymap wiring.
+//! - `actions`, `watch`: the controller. What commands and keys do,
+//!   background git work, keymap wiring, reloading narratives agents write.
 //! - `keys`: which key runs which action.
 //! - `view`: windows, buffers and rendering. Draws only; owns no config.
 //! - `state`, `config`, `hl`, `ui`, `bg`: leaves.
@@ -37,7 +37,6 @@
 mod actions;
 mod bg;
 pub mod config;
-mod generate;
 mod hl;
 mod keys;
 mod register;
@@ -50,7 +49,6 @@ pub use actions::{
     close, fold_at_cursor, goto_file, goto_group, open, refresh, reload_narrative, select_at_cursor,
     toggle_narrative, toggle_reasons,
 };
-pub use generate::{cancel_generate, generate};
 
 /// Background jobs whose results haven't been handled yet (for tests).
 pub fn background_jobs() -> usize {

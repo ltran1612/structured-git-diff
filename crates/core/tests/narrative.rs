@@ -69,7 +69,7 @@ fn render_includes_overall_group_why_and_file_reasons() {
     assert!(text.contains("- `a.lua` — adds x"));
     assert!(text.ends_with("- `b.lua`"));
     let none = narrative::render(None, &groups, State::None, "").join("\n");
-    assert!(none.contains("`/diff-narrative` in your agent"), "{none}");
+    assert!(none.contains("Ask your agent to run `/diff-narrative`."), "{none}");
 }
 
 #[test]

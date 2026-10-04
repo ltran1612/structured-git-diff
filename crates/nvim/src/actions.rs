@@ -12,9 +12,6 @@ use crate::state::{self, with_view};
 use crate::view::{Item, View};
 use crate::{bg, keys, ui, watch};
 
-/// Something to run on the main loop once background work has landed.
-pub(crate) type Then = Option<Box<dyn FnOnce()>>;
-
 pub(crate) fn report(res: Result<(), api::Error>) {
     if let Err(e) = res {
         ui::notify(&e.to_string(), ui::ERROR);
@@ -59,7 +56,7 @@ fn map_new_narrative(created: Result<Option<Buffer>, api::Error>, cfg: &Config) 
     }
 }
 
-pub(crate) fn open_narrative(v: &mut View, cfg: &Config) {
+fn open_narrative(v: &mut View, cfg: &Config) {
     map_new_narrative(v.open_narrative(cfg), cfg);
 }
 
@@ -69,16 +66,12 @@ pub(crate) fn open_narrative(v: &mut View, cfg: &Config) {
 /// The same spec again refreshes; a different spec replaces the view. Git
 /// runs on a background thread; the view appears when it's done.
 pub fn open(spec: Option<String>) {
-    open_then(spec.unwrap_or_default(), None);
-}
-
-pub(crate) fn open_then(spec: String, then: Then) {
-    let spec = spec.trim().to_owned();
+    let spec = spec.unwrap_or_default().trim().to_owned();
     let existing = with_view(|v| (v.model().spec.clone(), v.tab().clone()));
     if let Some((open_spec, tab)) = existing {
         if open_spec == spec && tab.is_valid() {
             report(api::set_current_tabpage(&tab));
-            return refresh_then(then);
+            return refresh();
         }
         close();
     }
@@ -96,11 +89,7 @@ pub(crate) fn open_then(spec: String, then: Then) {
         move || Model::load(repo, &spec, &grouping),
         move |res| {
             state::set_loading(false);
-            if finish_open(res)
-                && let Some(then) = then
-            {
-                then();
-            }
+            finish_open(res);
         },
     );
     if let Err(e) = started {
@@ -109,20 +98,20 @@ pub(crate) fn open_then(spec: String, then: Then) {
     }
 }
 
-/// Create the view for a freshly loaded model. False when there is nothing
-/// to show.
-fn finish_open(res: structdiff_core::error::Result<(Model, Vec<String>)>) -> bool {
+/// Create the view for a freshly loaded model, unless there is nothing to
+/// show.
+fn finish_open(res: structdiff_core::error::Result<(Model, Vec<String>)>) {
     let (model, warnings) = match res {
         Ok(m) => m,
         Err(e) => {
             ui::notify(&e.to_string(), ui::ERROR);
-            return false;
+            return;
         }
     };
     notify_all(warnings);
     if model.file_count() == 0 {
         ui::notify(&format!("no changes in {}", model.range.describe()), ui::INFO);
-        return false;
+        return;
     }
     let cfg = state::config();
     let has_narrative = model.narrative.is_some();
@@ -131,7 +120,7 @@ fn finish_open(res: structdiff_core::error::Result<(Model, Vec<String>)>) -> boo
         Ok(v) => v,
         Err(e) => {
             ui::notify(&e.to_string(), ui::ERROR);
-            return false;
+            return;
         }
     };
     keys::map_panel(v.panel_buf_mut(), &cfg);
@@ -145,16 +134,11 @@ fn finish_open(res: structdiff_core::error::Result<(Model, Vec<String>)>) -> boo
         report(api::set_current_win(v.sidebar()));
         v.focus_current();
     });
-    true
 }
 
 /// Rescan git in the background and redraw. Rescans may overlap; only the
 /// latest one's result is applied.
 pub fn refresh() {
-    refresh_then(None);
-}
-
-pub(crate) fn refresh_then(then: Then) {
     let grouping = state::config().grouping();
     let Some((mut model, scan)) = with_view(|v| (v.model().clone(), v.begin_scan())) else { return };
     let started = bg::spawn(
@@ -180,9 +164,6 @@ pub(crate) fn refresh_then(then: Then) {
                 let idx = v.current_index().unwrap_or(0);
                 report(show(v, idx, &cfg));
             });
-            if let Some(then) = then {
-                then();
-            }
         },
     );
     if let Err(e) = started {
