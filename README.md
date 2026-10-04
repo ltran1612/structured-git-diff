@@ -39,7 +39,8 @@ lazy.nvim:
 
 ```lua
 {
-  "…/structdiff.nvim", -- or dir = "~/path/to/organizeddiffview"
+  "ltran1612/structured-git-diff", -- or dir = "/path/to/a/local/clone"
+  name = "structdiff.nvim",
   main = "structdiff",
   build = "./build.sh",
   cmd = { "StructDiff", "StructDiffClose", "StructDiffRefresh", "StructDiffNarrative", "StructDiffGenerate", "StructDiffCancel" },
@@ -52,12 +53,12 @@ lazy.nvim:
 - installs the plugin as `lua/structdiff.so`, where `require("structdiff")` finds it;
 - installs the `structdiff` command (used by the skill) into `~/.local/bin`, or into `$STRUCTDIFF_BIN_DIR` if set. That directory must be on your `PATH`.
 
-`main` is needed because lazy.nvim only auto-detects Lua modules. After pulling changes, rebuild with `:Lazy build structdiff.nvim` and restart Neovim.
+`main` is needed because lazy.nvim only auto-detects Lua modules. `name` keeps the plugin's name (and its directory) as `structdiff.nvim` instead of the repo name. `:Lazy update` rebuilds automatically; to rebuild by hand, run `:Lazy build structdiff.nvim`, then restart Neovim.
 
-Install the skill so Claude Code can find it:
+Install the skill so Claude Code can find it. With the spec above, lazy.nvim cloned the repo into `~/.local/share/nvim/lazy/structdiff.nvim`:
 
 ```sh
-ln -s /path/to/organizeddiffview/skill/diff-narrative ~/.claude/skills/diff-narrative
+ln -s ~/.local/share/nvim/lazy/structdiff.nvim/skill/diff-narrative ~/.claude/skills/diff-narrative
 ```
 
 ## Usage
